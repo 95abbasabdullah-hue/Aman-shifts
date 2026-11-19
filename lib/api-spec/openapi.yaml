@@ -665,18 +665,26 @@ components:
       properties:
         id: { type: string }
         code: { type: string }
+        category: { type: string, enum: [working, attendance] }
         name: { type: string }
+        meaning: { type: ["string", "null"] }
         color: { type: string, pattern: "^#[0-9A-Fa-f]{6}$" }
+        displayCode: { type: ["string", "null"] }
+        displayInCalendar: { type: boolean }
         startsAt: { type: ["string", "null"], pattern: "^\\d{2}:\\d{2}$" }
         endsAt: { type: ["string", "null"], pattern: "^\\d{2}:\\d{2}$" }
         active: { type: boolean }
-      required: [id, code, name, color, startsAt, endsAt, active]
+      required: [id, code, category, name, meaning, color, displayCode, displayInCalendar, startsAt, endsAt, active]
     ShiftTypeInput:
       type: object
       properties:
         code: { type: string, minLength: 1, maxLength: 20 }
+        category: { type: string, enum: [working, attendance] }
         name: { type: string, minLength: 1, maxLength: 100 }
+        meaning: { type: ["string", "null"], maxLength: 240 }
         color: { type: string, pattern: "^#[0-9A-Fa-f]{6}$" }
+        displayCode: { type: ["string", "null"], maxLength: 20 }
+        displayInCalendar: { type: boolean }
         startsAt: { type: ["string", "null"], pattern: "^\\d{2}:\\d{2}$" }
         endsAt: { type: ["string", "null"], pattern: "^\\d{2}:\\d{2}$" }
       required: [code, name, color]
@@ -684,8 +692,12 @@ components:
       type: object
       properties:
         code: { type: string, minLength: 1, maxLength: 20 }
+        category: { type: string, enum: [working, attendance] }
         name: { type: string, minLength: 1, maxLength: 100 }
+        meaning: { type: ["string", "null"], maxLength: 240 }
         color: { type: string, pattern: "^#[0-9A-Fa-f]{6}$" }
+        displayCode: { type: ["string", "null"], maxLength: 20 }
+        displayInCalendar: { type: boolean }
         startsAt: { type: ["string", "null"], pattern: "^\\d{2}:\\d{2}$" }
         endsAt: { type: ["string", "null"], pattern: "^\\d{2}:\\d{2}$" }
         active: { type: boolean }
@@ -703,8 +715,11 @@ components:
         shiftCode: { type: string }
         shiftName: { type: string }
         shiftColor: { type: string }
+        category: { type: string, enum: [working, attendance] }
+        displayInCalendar: { type: boolean }
+        isWorking: { type: boolean }
         notes: { type: ["string", "null"] }
-      required: [id, date, employeeId, employeeCode, employeeName, departmentId, departmentName, shiftTypeId, shiftCode, shiftName, shiftColor, notes]
+      required: [id, date, employeeId, employeeCode, employeeName, departmentId, departmentName, shiftTypeId, shiftCode, shiftName, shiftColor, category, displayInCalendar, isWorking, notes]
     ScheduleResponse:
       type: object
       properties:
@@ -712,15 +727,20 @@ components:
         status: { type: string, enum: [draft, published] }
         versionId: { type: ["string", "null"] }
         versionNumber: { type: ["integer", "null"] }
+        periodStart: { type: ["string", "null"], format: date }
+        periodEnd: { type: ["string", "null"], format: date }
         assignments:
           type: array
           items: { $ref: "#/components/schemas/ShiftAssignment" }
-      required: [month, status, versionId, versionNumber, assignments]
+      required: [month, status, versionId, versionNumber, periodStart, periodEnd, assignments]
     RosterImport:
       type: object
       properties:
         id: { type: string }
         month: { type: string }
+        periodStart: { type: ["string", "null"], format: date }
+        periodEnd: { type: ["string", "null"], format: date }
+        selectedWorksheet: { type: ["string", "null"] }
         status: { type: string, enum: [needs_review, ready, committed, rejected] }
         uploadedByName: { type: string }
         uploadedAt: { type: string, format: date-time }
@@ -729,11 +749,11 @@ components:
         validCount: { type: integer }
         issueCount: { type: integer }
         createdVersionId: { type: ["string", "null"] }
-      required: [id, month, status, uploadedByName, uploadedAt, detectedFormat, rowCount, validCount, issueCount, createdVersionId]
+      required: [id, month, periodStart, periodEnd, selectedWorksheet, status, uploadedByName, uploadedAt, detectedFormat, rowCount, validCount, issueCount, createdVersionId]
     ImportIssue:
       type: object
       properties:
-        code: { type: string, enum: [unknown_employee, unknown_shift, duplicate, invalid_date, missing_value, unsupported_sheet] }
+        code: { type: string, enum: [unknown_employee, unknown_shift, unknown_department, missing_employee_id, competing_schedules, duplicate, invalid_date, missing_value, unsupported_sheet] }
         message: { type: string }
         rowNumber: { type: ["integer", "null"] }
         value: { type: ["string", "null"] }
@@ -747,21 +767,25 @@ components:
         departmentColumn: { type: ["string", "null"] }
         dateColumn: { type: ["string", "null"] }
         shiftCodeColumn: { type: ["string", "null"] }
-      required: [format, employeeIdColumn, employeeNameColumn, departmentColumn, dateColumn, shiftCodeColumn]
+        worksheetName: { type: ["string", "null"] }
+      required: [format, employeeIdColumn, employeeNameColumn, departmentColumn, dateColumn, shiftCodeColumn, worksheetName]
     StagedAssignment:
       type: object
       properties:
         rowNumber: { type: integer }
         date: { type: ["string", "null"], format: date }
+        sourceEmployeeId: { type: ["string", "null"] }
+        sourceEmployeeName: { type: string }
         employeeId: { type: ["string", "null"] }
         employeeCode: { type: ["string", "null"] }
         employeeName: { type: string }
         departmentId: { type: ["string", "null"] }
         shiftTypeId: { type: ["string", "null"] }
         shiftCode: { type: string }
+        rawShiftValue: { type: string }
         shiftName: { type: ["string", "null"] }
         valid: { type: boolean }
-      required: [rowNumber, date, employeeId, employeeCode, employeeName, departmentId, shiftTypeId, shiftCode, shiftName, valid]
+      required: [rowNumber, date, sourceEmployeeId, sourceEmployeeName, employeeId, employeeCode, employeeName, departmentId, shiftTypeId, shiftCode, rawShiftValue, shiftName, valid]
     ImportPreview:
       type: object
       properties:
@@ -770,13 +794,19 @@ components:
           type: array
           items: { type: string }
         mapping: { $ref: "#/components/schemas/ImportMapping" }
+        periodStart: { type: ["string", "null"], format: date }
+        periodEnd: { type: ["string", "null"], format: date }
+        selectedWorksheet: { type: ["string", "null"] }
+        worksheetChoices:
+          type: array
+          items: { type: string }
         records:
           type: array
           items: { $ref: "#/components/schemas/StagedAssignment" }
         issues:
           type: array
           items: { $ref: "#/components/schemas/ImportIssue" }
-      required: [import, columns, mapping, records, issues]
+      required: [import, columns, mapping, periodStart, periodEnd, selectedWorksheet, worksheetChoices, records, issues]
     RosterImportPreviewInput:
       type: object
       properties:
@@ -817,6 +847,8 @@ components:
       properties:
         id: { type: string }
         month: { type: string }
+        periodStart: { type: string, format: date }
+        periodEnd: { type: string, format: date }
         versionNumber: { type: integer }
         status: { type: string, enum: [draft, published, archived] }
         sourceImportId: { type: ["string", "null"] }
@@ -824,7 +856,7 @@ components:
         createdAt: { type: string, format: date-time }
         publishedAt: { type: ["string", "null"], format: date-time }
         assignmentCount: { type: integer }
-      required: [id, month, versionNumber, status, sourceImportId, createdByName, createdAt, publishedAt, assignmentCount]
+      required: [id, month, periodStart, periodEnd, versionNumber, status, sourceImportId, createdByName, createdAt, publishedAt, assignmentCount]
     CreateRosterVersionInput:
       type: object
       properties:

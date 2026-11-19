@@ -10,6 +10,8 @@ import type { RosterVersionStatus } from './rosterVersionStatus';
 export interface RosterVersion {
   id: string;
   month: string;
+  periodStart: string;
+  periodEnd: string;
   versionNumber: number;
   status: RosterVersionStatus;
   /** @nullable */

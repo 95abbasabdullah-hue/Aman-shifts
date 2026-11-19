@@ -5,6 +5,7 @@
  * Aman Team Shifts API. All protected operations require a valid Clerk session and enforce application roles on the server.
  * OpenAPI spec version: 0.1.0
  */
+import type { ShiftTypeInputCategory } from './shiftTypeInputCategory';
 
 export interface ShiftTypeInput {
   /**
@@ -12,13 +13,25 @@ export interface ShiftTypeInput {
      * @maxLength 20
      */
   code: string;
+  category?: ShiftTypeInputCategory;
   /**
      * @minLength 1
      * @maxLength 100
      */
   name: string;
+  /**
+     * @maxLength 240
+     * @nullable
+     */
+  meaning?: string | null;
   /** @pattern ^#[0-9A-Fa-f]{6}$ */
   color: string;
+  /**
+     * @maxLength 20
+     * @nullable
+     */
+  displayCode?: string | null;
+  displayInCalendar?: boolean;
   /**
      * @nullable
      * @pattern ^\d{2}:\d{2}$

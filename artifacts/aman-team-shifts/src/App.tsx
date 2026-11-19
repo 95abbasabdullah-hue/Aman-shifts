@@ -120,15 +120,15 @@ function PublicHome() {
       </div>
       <div className="hero-art" aria-label="Illustration of an organized shift calendar">
         <div className="art-orbit orbit-one" /><div className="art-orbit orbit-two" />
-        <div className="floating-tag tag-top"><span className="tag-dot blue" /> OT 1 <b>07:00–15:00</b></div>
+         <div className="floating-tag tag-top"><span className="tag-dot blue" /> D</div>
         <div className="schedule-preview">
           <div className="preview-head"><div><small>TEAM ROSTER</small><strong>November 2026</strong></div><CalendarDays size={19} /></div>
           <div className="preview-week">{['S','M','T','W','T','F','S'].map((d,i)=><span key={`${d}${i}`}>{d}</span>)}</div>
           <div className="preview-days">{[15,16,17,18,19,20,21].map(d=><span className={d===19?'selected':''} key={d}>{d}</span>)}</div>
           <div className="preview-label">THURSDAY · 19 NOV <span>OR/PACU</span></div>
-          <div className="preview-shift"><span className="preview-avatar">LF</span><div><b>Layla Faris</b><small>OT 1 · 07:00–15:00</small></div><i className="shift-bar blue-bar" /></div>
-          <div className="preview-shift"><span className="preview-avatar avatar-green">MS</span><div><b>Mira Sen</b><small>OT 1 · 15:00–23:00</small></div><i className="shift-bar green-bar" /></div>
-          <div className="preview-shift"><span className="preview-avatar avatar-sand">RK</span><div><b>Rana Khoury</b><small>Dx · 08:00–16:00</small></div><i className="shift-bar sand-bar" /></div>
+           <div className="preview-shift"><span className="preview-avatar">LF</span><div><b>Layla Faris</b><small>D</small></div><i className="shift-bar blue-bar" /></div>
+           <div className="preview-shift"><span className="preview-avatar avatar-green">MS</span><div><b>Mira Sen</b><small>M</small></div><i className="shift-bar green-bar" /></div>
+           <div className="preview-shift"><span className="preview-avatar avatar-sand">RK</span><div><b>Rana Khoury</b><small>D1</small></div><i className="shift-bar sand-bar" /></div>
         </div>
         <div className="floating-tag tag-bottom"><span className="tag-dot green" /> Published <b>v12</b><Check size={14} /></div>
       </div>
@@ -284,7 +284,7 @@ function SchedulePage({mine=false}:{mine?:boolean}) {
   const refetch=mine?mineQuery.refetch:teamQuery.refetch;
   const {data:user}=useGetCurrentUser();
   const [editAssignment,setEditAssignment]=useState<ShiftAssignment|null|false>(false);
-  const rows=schedule?.assignments.filter(a=>a.date===selectedDate) ?? [];
+   const rows=schedule?.assignments.filter(a=>a.date===selectedDate&&a.displayInCalendar) ?? [];
   const grouped=useMemo(()=>rows.reduce<Record<string,ShiftAssignment[]>>((acc,a)=>{(acc[a.departmentName]??=[]).push(a);return acc;},{}),[rows]);
   const admin=user?.role==='admin';
   const changeMonth=(next:string)=>{setMonth(next);setSelectedDate(`${next}-01`);};
@@ -314,7 +314,7 @@ function SchedulePage({mine=false}:{mine?:boolean}) {
     </div>
     {isLoading?<SpinnerBlock/>:isError||!schedule?<QueryError retry={()=>refetch()}/>:<>
       <div className="calendar-strip"><div className="calendar-strip-head">{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=><span key={d}>{d}</span>)}</div>
-        <div className="calendar-date-grid">{Array.from({length:leadingCells},(_,i)=><span className="calendar-leading-cell" aria-hidden="true" key={`blank-${i}`}/>)}{dates.map(d=>{const count=schedule.assignments.filter(a=>a.date===d).length;const chosen=d===selectedDate;
+         <div className="calendar-date-grid">{Array.from({length:leadingCells},(_,i)=><span className="calendar-leading-cell" aria-hidden="true" key={`blank-${i}`}/>)}{dates.map(d=>{const count=schedule.assignments.filter(a=>a.date===d&&a.isWorking).length;const chosen=d===selectedDate;
           return <button key={d} className={`calendar-date ${chosen?'chosen':''}`} onClick={()=>setSelectedDate(d)} data-testid={`button-date-${d}`}>
             <small>{Number(d.slice(-2))}</small>{count>0&&<i className="date-count">{count>99?'99+':count}</i>}</button>})}</div>
       </div>
@@ -322,9 +322,9 @@ function SchedulePage({mine=false}:{mine?:boolean}) {
         <span className={`status-pill ${schedule.status==='published'?'status-live':'status-draft'}`}><i/>{schedule.status==='published'?'Published':'Draft'}</span></div>
       {rows.length===0?<EmptyState title="No shifts for this date" detail="Choose another day to see the published team assignments."/>:
         <div className="department-groups">{Object.entries(grouped).map(([department,assignments])=><section className="department-group" key={department}>
-          <div className="department-title"><span>{department}</span><span className="department-count">{assignments.length} {assignments.length===1?'shift':'shifts'}</span></div>
+         <div className="department-title"><span>{department}</span><span className="department-count">{assignments.filter(a=>a.isWorking).length} active shifts</span></div>
           {assignments.map(a=><ShiftRow assignment={a} key={a.id} admin={admin&&schedule.status==='draft'}
-            onEdit={()=>setEditAssignment(a)} onDelete={()=>{if(schedule.versionId&&window.confirm(`Remove ${a.employeeName}’s ${a.shiftName} shift?`))deletes.mutate({versionId:schedule.versionId,assignmentId:a.id});}} />)}
+             onEdit={()=>setEditAssignment(a)} onDelete={()=>{if(schedule.versionId&&window.confirm(`Remove ${a.employeeName}’s ${a.shiftCode} assignment?`))deletes.mutate({versionId:schedule.versionId,assignmentId:a.id});}} />)}
         </section>)}</div>}
       {schedule.assignments.length===0&&rows.length===0&&<p className="quiet-note">There are no assignments in this roster version yet.</p>}
     </>}
@@ -336,35 +336,35 @@ function SchedulePage({mine=false}:{mine?:boolean}) {
       busy={creates.isPending||updates.isPending}
       error={creates.isError||updates.isError?'The assignment could not be saved. Please try again.':undefined}
       onClose={()=>setEditAssignment(false)} onSubmit={saveAssignment} submitLabel="Save assignment" />}
-    <div className="shift-legend">{shiftTypes.data?.filter(type=>type.active).map(type=><span key={type.id}><i className="legend-dot" style={{background:type.color}}/>{type.code||type.name}</span>)}
+     <div className="shift-legend">{shiftTypes.data?.filter(type=>type.active&&type.displayInCalendar).map(type=><span key={type.id}><i className="legend-dot" style={{background:type.color}}/>{type.displayCode??type.code}</span>)}
       <span>Shift colors follow your team’s setup</span></div>
   </AppShell>;
 }
 
 function ShiftRow({assignment,admin,onEdit,onDelete}:{assignment:ShiftAssignment;admin:boolean;onEdit:()=>void;onDelete:()=>void}) {
   const initials=assignment.employeeName.split(' ').map(p=>p[0]).slice(0,2).join('').toUpperCase();
-  const shiftLabel=assignment.shiftCode||assignment.shiftName;
+  const shiftLabel=assignment.shiftCode;
   return <div className="shift-row" data-testid={`row-assignment-${assignment.id}`}>
     <span className="staff-avatar">{initials}</span><div className="shift-card" style={{'--shift-color':assignment.shiftColor} as React.CSSProperties}>
       <div className="shift-staff"><strong>{assignment.employeeName}</strong><span>{assignment.employeeCode}</span></div>
-      <div className="shift-detail"><span>{shiftLabel}</span>{assignment.notes&&<small>{assignment.notes}</small>}</div>
+       <div className="shift-detail"><span>{shiftLabel}</span>{admin&&assignment.notes&&<small>{assignment.notes}</small>}</div>
       {admin&&<div className="shift-actions"><button onClick={onEdit} aria-label={`Edit ${assignment.employeeName} shift`} data-testid={`button-edit-assignment-${assignment.id}`}>Edit</button><button onClick={onDelete} aria-label={`Delete ${assignment.employeeName} shift`} data-testid={`button-delete-assignment-${assignment.id}`}>Remove</button></div>}
     </div>
   </div>;
 }
 
-type Field = {name:string;label:string;type?:string;value?:string|null;options?:{value:string;label:string}[];placeholder?:string;required?:boolean};
+type Field = {name:string;label:string;type?:string;value?:string|null;options?:{value:string;label:string}[];placeholder?:string;required?:boolean;disabled?:boolean};
 function FormModal({title,description,fields,onClose,onSubmit,busy=false,submitLabel='Save changes',error}:{
   title:string;description?:string;fields:Field[];onClose:()=>void;onSubmit:(data:Record<string,string>)=>void;busy?:boolean;submitLabel?:string;error?:string;
 }) {
-  const handle=(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();const form=new FormData(e.currentTarget);const data:Record<string,string>={};fields.forEach(f=>data[f.name]=String(form.get(f.name)??''));onSubmit(data);};
+  const handle=(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();const form=new FormData(e.currentTarget);const data:Record<string,string>={};fields.forEach(f=>data[f.name]=String(form.get(f.name)??f.value??''));onSubmit(data);};
   return <div className="modal-backdrop" role="presentation" onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}>
     <section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
       <header><div><h2 id="modal-title">{title}</h2>{description&&<p>{description}</p>}</div><button className="icon-button" onClick={onClose} aria-label="Close dialog"><X size={19}/></button></header>
       <form onSubmit={handle}><div className="modal-fields">{fields.map(field=><label className="form-field" key={field.name}><span>{field.label}</span>
-        {field.type==='select'?<select name={field.name} defaultValue={field.value||''} required={field.required!==false} data-testid={`select-${field.name}`}>
+         {field.type==='select'?<select name={field.name} defaultValue={field.value||''} required={field.required!==false} disabled={field.disabled} data-testid={`select-${field.name}`}>
           <option value="" disabled>Choose {field.label.toLowerCase()}</option>{field.options?.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}</select>:
-          <input name={field.name} type={field.type||'text'} defaultValue={field.value||''} placeholder={field.placeholder} required={field.required!==false} data-testid={`input-${field.name}`} />}</label>)}</div>
+           <input name={field.name} type={field.type||'text'} defaultValue={field.value||''} placeholder={field.placeholder} required={field.required!==false} disabled={field.disabled} data-testid={`input-${field.name}`} />}</label>)}</div>
         {error&&<p className="inline-error" role="alert">{error}</p>}
         <footer><button type="button" className="button button-quiet" onClick={onClose}>Cancel</button>
           <button className="button button-primary" disabled={busy} data-testid="button-modal-submit">{busy?'Saving…':submitLabel}</button></footer></form>
@@ -397,7 +397,9 @@ function DirectoryPage({kind}:{kind:'employees'|'departments'|'shifts'}) {
       if(modal?.item)updateEmployee.mutate({employeeId:(modal.item as Employee).id,data:payload});
       else createEmployee.mutate({data:payload});
     } else {
-      const payload={code:data.code.toUpperCase(),name:data.name,color:data.color,startsAt:data.startsAt||null,endsAt:data.endsAt||null};
+      const payload={code:data.code.toUpperCase(),category:(data.category||'working') as 'working'|'attendance',name:data.name,
+        meaning:data.meaning||null,color:data.color,displayCode:data.displayCode,displayInCalendar:data.displayInCalendar!=='false',
+        startsAt:data.startsAt||null,endsAt:data.endsAt||null};
       if(modal?.item)updateShift.mutate({shiftTypeId:(modal.item as ShiftType).id,data:payload});
       else createShift.mutate({data:payload});
     }
@@ -414,10 +416,21 @@ function DirectoryPage({kind}:{kind:'employees'|'departments'|'shifts'}) {
       {name:'fullName',label:'Full name',value:e?.fullName},{name:'employeeCode',label:'Employee code',value:e?.employeeCode},
       {name:'jobTitle',label:'Job title',value:e?.jobTitle},{name:'departmentId',label:'Department',type:'select',value:e?.departmentId,
         options:(departments.data||[]).map(d=>({value:d.id,label:d.name}))},{name:'email',label:'Work email',type:'email',required:false,value:e?.email}];}
-    const s=item as ShiftType|undefined;return [
-      {name:'name',label:'Shift name',value:s?.name},{name:'code',label:'Short code',value:s?.code},
-      {name:'color',label:'Shift color',type:'color',value:s?.color||'#9acfe6'},
-      {name:'startsAt',label:'Starts at',type:'time',required:false,value:s?.startsAt},{name:'endsAt',label:'Ends at',type:'time',required:false,value:s?.endsAt}];
+    const s=item as ShiftType|undefined;
+    const systemCode=s?['D','N','M','D1','AL','CL','EL','R','OFF','/','BLANK'].includes(s.code):false;
+    const fixedWorkDefinition=Boolean(s&&['D','N','M','D1'].includes(s.code));
+    return [
+      {name:'category',label:'Category',type:'select',value:s?.category||'working',disabled:systemCode,
+        options:[{value:'working',label:'Working shift'},{value:'attendance',label:'Attendance status'}]},
+      {name:'name',label:'Name',value:s?.name,disabled:fixedWorkDefinition},
+      {name:'code',label:'Code',value:s?.code,disabled:systemCode},
+      {name:'meaning',label:'Meaning (optional)',value:s?.meaning,required:false,disabled:fixedWorkDefinition},
+      {name:'color',label:'Display color',type:'color',value:s?.color||'#9acfe6',disabled:fixedWorkDefinition},
+      {name:'displayCode',label:'Calendar code',value:s?.displayCode??s?.code,required:false,disabled:fixedWorkDefinition},
+      {name:'displayInCalendar',label:'Show in calendar',type:'select',value:String(s?.displayInCalendar??true),disabled:fixedWorkDefinition,
+        options:[{value:'true',label:'Show'},{value:'false',label:'Hide'}]},
+      {name:'startsAt',label:'Internal start time',type:'time',required:false,value:s?.startsAt,disabled:systemCode},
+      {name:'endsAt',label:'Internal end time',type:'time',required:false,value:s?.endsAt,disabled:systemCode}];
   };
   const toggleActive=(employee:Employee)=>updateEmployee.mutate({employeeId:employee.id,data:{active:!employee.active}});
   return <AppShell title={titles[kind]}><PageHeading eyebrow="ROSTER SETUP" title={titles[kind]} detail={details[kind]}
@@ -436,9 +449,9 @@ function DirectoryPage({kind}:{kind:'employees'|'departments'|'shifts'}) {
         <div className="setup-count"><b>{d.employeeCount}</b><span>members</span></div><button className="button button-secondary button-small" onClick={()=>setModal({item:d})} data-testid={`button-edit-department-${d.id}`}>Edit</button>
       </article>)}</section>:
       <section className="shift-type-list">{(shifts.data||[]).map(s=><article className="shift-type-row" key={s.id} data-testid={`row-shift-${s.id}`}>
-        <span className="shift-swatch" style={{background:s.color}}/><div className="shift-type-main"><strong>{s.name}<small>{s.code}</small></strong><span>{s.startsAt&&s.endsAt?`${fmtTime(s.startsAt)} – ${fmtTime(s.endsAt)}`:'Time not specified'}</span></div>
+         <span className="shift-swatch" style={{background:s.color}}/><div className="shift-type-main"><strong>{s.name}<small>{s.code} · {s.category==='working'?'Working':'Attendance'}</small></strong><span>{s.meaning|| (s.startsAt&&s.endsAt?`${fmtTime(s.startsAt)} – ${fmtTime(s.endsAt)}`:'Meaning not specified')}</span></div>
         <span className={`employee-status ${s.active?'active':'inactive'}`}><i/>{s.active?'Active':'Inactive'}</span>
-        <button className="button button-quiet button-small" onClick={()=>updateShift.mutate({shiftTypeId:s.id,data:{active:!s.active}})} data-testid={`button-toggle-shift-${s.id}`}>{s.active?'Deactivate':'Reactivate'}</button>
+         <button className="button button-quiet button-small" disabled={['D','N','M','D1','AL','CL','EL','R','OFF','/','BLANK'].includes(s.code)} onClick={()=>updateShift.mutate({shiftTypeId:s.id,data:{active:!s.active}})} data-testid={`button-toggle-shift-${s.id}`}>{s.active?'Deactivate':'Reactivate'}</button>
         <button className="button button-secondary button-small" onClick={()=>setModal({item:s})} data-testid={`button-edit-shift-${s.id}`}>Edit</button>
       </article>)}</section>}
     {modal&&<FormModal title={`${modal.item?'Edit':'Add'} ${kind==='employees'?'employee':kind==='departments'?'department':'shift type'}`}
@@ -460,7 +473,7 @@ function ImportsPage() {
   const imports=useListRosterImports();
   const employees=useListEmployees({activeOnly:true});
   const shifts=useListShiftTypes();
-  const previewMutation=usePreviewRosterImport({mutation:{onSuccess:(data)=>{setPreview(data);setMapping(data.mapping);setEmployeeMap({});setShiftMap({});invalidate(getListRosterImportsQueryKey());}}});
+  const previewMutation=usePreviewRosterImport({mutation:{onSuccess:(data)=>{setPreview(data);setMapping(data.mapping);setEmployeeMap(Object.fromEntries(data.records.filter(r=>!r.sourceEmployeeId).map(r=>[String(r.rowNumber),r.employeeId||''])));setShiftMap({});invalidate(getListRosterImportsQueryKey());}}});
   const resolveMutation=useResolveRosterImport({mutation:{onSuccess:(data)=>{setPreview(data);invalidate(getListRosterImportsQueryKey());}}});
   const confirmMutation=useConfirmRosterImport({mutation:{onSuccess:()=>{setPreview(null);setFile(null);invalidate(getListRosterImportsQueryKey());invalidateRosterReads();}}});
   const setFileFromInput=(e:FormEvent<HTMLInputElement>)=>{const target=e.currentTarget;setFile(target.files?.[0]||null);};
@@ -470,17 +483,20 @@ function ImportsPage() {
   const resolve=()=>{
     if(!preview)return;
     resolveMutation.mutate({importId:preview.import.id,data:{
-      employees:preview.records.flatMap(record=>{
-        const key=record.employeeCode||record.employeeName;
-        const employeeId=employeeMap[key];
-        return !record.employeeId&&employeeId?[{rowNumber:record.rowNumber,employeeId}]:[];
-      }),
+       employees:Array.from(new Map(preview.records.filter(record=>!record.employeeId||!record.sourceEmployeeId)
+         .map(record=>[record.rowNumber,record])).values()).flatMap(record=>{
+           const employeeId=employeeMap[String(record.rowNumber)];
+           return employeeId?[{rowNumber:record.rowNumber,employeeId}]:[];
+         }),
       shiftCodes:Object.entries(shiftMap).filter(([,shiftTypeId])=>shiftTypeId).map(([shiftCode,shiftTypeId])=>({shiftCode,shiftTypeId})),
     }});
   };
-  const unknownEmployees=Array.from(new Set(preview?.records.filter(r=>!r.employeeId).map(r=>r.employeeCode||r.employeeName)||[]));
+  const employeeRows=Array.from(new Map((preview?.records||[]).filter(r=>!r.employeeId||!r.sourceEmployeeId)
+    .map(record=>[record.rowNumber,record])).values());
   const unknownShifts=Array.from(new Set(preview?.records.filter(r=>!r.shiftTypeId&&r.shiftCode).map(r=>r.shiftCode)||[]));
-  const unresolved=unknownEmployees.some(code=>!employeeMap[code])||unknownShifts.some(code=>!shiftMap[code]);
+  const unresolved=employeeRows.some(record=>!employeeMap[String(record.rowNumber)])||unknownShifts.some(code=>!shiftMap[code]);
+  const staffCount=new Set((preview?.records||[]).map(record=>record.rowNumber)).size;
+  const dateCount=new Set((preview?.records||[]).map(record=>record.date).filter(Boolean)).size;
   return <AppShell title="Roster imports"><PageHeading eyebrow="MONTHLY ROSTER" title="Roster imports" detail="Upload a prepared Excel roster, resolve any unfamiliar values, then review before it becomes the team schedule."
       actions={<MonthPicker month={month} onChange={setMonth}/>}/>
     <div className="import-layout">
@@ -490,28 +506,31 @@ function ImportsPage() {
             <span className="drop-icon"><FileSpreadsheet size={22}/></span><strong>{file?file.name:'Select an .xlsx roster'}</strong>
             <small>{file?`${(file.size/1024).toFixed(0)} KB · ${monthLabel(month)}`:'Your file is reviewed before any roster changes are made.'}</small>
             <span className="button button-secondary button-small">{file?'Choose another':'Browse files'}</span></label>
-          <div className="import-month"><label>Roster month</label><input type="month" value={month} onChange={e=>setMonth(e.target.value)} data-testid="input-import-month"/>
+          <div className="import-month"><label>Fallback month</label><input type="month" value={month} onChange={e=>setMonth(e.target.value)} data-testid="input-import-month"/>
             <button className="button button-primary" onClick={runPreview} disabled={!file||previewMutation.isPending} data-testid="button-preview-import">
               {previewMutation.isPending?'Reading file…':'Preview roster'} <ArrowRight size={15}/></button></div>
+          <p className="muted-copy">Dates in the workbook determine the roster period; this month is only used when date headers omit a year.</p>
           {previewMutation.isError&&<p className="inline-error"><CircleAlert size={15}/> The file could not be previewed. Check the format and try again.</p>}
         </div>
         {preview&&<section className="surface preview-panel">
           <div className="section-head"><div><div className="eyebrow">STEP 02 · REVIEW</div><h2>Import preview</h2></div>
             <span className={`status-pill ${preview.import.issueCount?'status-review':'status-live'}`}><i/>{preview.import.issueCount?`${preview.import.issueCount} issues`:'Ready to review'}</span></div>
-          <div className="preview-stats"><span><b>{preview.import.rowCount}</b> rows detected</span><span><b>{preview.import.validCount}</b> valid</span><span><b>{preview.import.issueCount}</b> need attention</span></div>
+          <div className="preview-stats"><span><b>{preview.import.rowCount}</b> cells</span><span><b>{staffCount}</b> staff</span><span><b>{dateCount}</b> dates</span><span><b>{preview.import.validCount}</b> resolved</span><span><b>{preview.import.issueCount}</b> need attention</span></div>
+          <p className="muted-copy">Period: {preview.periodStart||'—'} to {preview.periodEnd||'—'}{preview.selectedWorksheet?` · Worksheet: ${preview.selectedWorksheet}`:''}</p>
           <div className="mapping-grid">{columns.map(key=><label className="form-field" key={key}><span>{mappingFieldNames[key]}</span><select value={mapping?.[key]||''} onChange={e=>setMapping(prev=>({...prev!,[key]:e.target.value||null}))}>
             {key==='format'?<>{['auto','wide','long'].map(v=><option key={v} value={v}>{v==='auto'?'Automatic':v==='wide'?'Wide format':'Long format'}</option>)}</>:
               <><option value="">Not mapped</option>{preview.columns.map(col=><option value={col} key={col}>{col}</option>)}</>}</select></label>)}</div>
+          {preview.worksheetChoices.length>1&&<label className="form-field worksheet-choice"><span>Confirm latest worksheet</span><select value={mapping?.worksheetName||''} onChange={e=>setMapping(prev=>({...prev!,worksheetName:e.target.value||null}))}><option value="">Choose worksheet</option>{preview.worksheetChoices.map(name=><option key={name} value={name}>{name}</option>)}</select><small>Choose the correct sheet, then preview again.</small></label>}
           {preview.records.length>0&&<div className="table-wrap preview-table"><table><thead><tr><th>Row</th><th>Date</th><th>Employee</th><th>Shift</th><th>Check</th></tr></thead>
-            <tbody>{preview.records.slice(0,12).map(r=><tr key={r.rowNumber}><td>{r.rowNumber}</td><td>{r.date||'—'}</td><td>{r.employeeName||r.employeeCode||'—'}</td><td>{r.shiftName||r.shiftCode||'—'}</td><td><span className={`mini-status ${r.valid?'valid':'invalid'}`}>{r.valid?'Valid':'Check'}</span></td></tr>)}</tbody></table>
-            {preview.records.length>12&&<p className="table-footnote">Showing 12 of {preview.records.length} rows.</p>}</div>}
-          {(unknownEmployees.length>0||unknownShifts.length>0)&&<div className="resolution-box"><div className="eyebrow">MATCH UNRECOGNIZED VALUES</div><p>Connect imported codes to the current team directory before confirming.</p>
-            {unknownEmployees.map(code=><label className="resolution-row" key={`emp-${code}`}><span>Employee <b>{code}</b></span><select value={employeeMap[code]||''} onChange={e=>setEmployeeMap(m=>({...m,[code]:e.target.value}))}><option value="">Choose employee</option>{(employees.data||[]).map(e=><option key={e.id} value={e.id}>{e.fullName} · {e.employeeCode}</option>)}</select></label>)}
+            <tbody>{preview.records.slice(0,12).map((r,i)=><tr key={`${r.rowNumber}-${r.date}-${i}`}><td>{r.rowNumber}</td><td>{r.date||'—'}</td><td>{r.sourceEmployeeName||r.employeeName||r.sourceEmployeeId||'—'}</td><td>{r.shiftCode||'Blank cell'}</td><td><span className={`mini-status ${r.valid?'valid':'invalid'}`}>{r.valid?'Valid':'Check'}</span></td></tr>)}</tbody></table>
+            {preview.records.length>12&&<p className="table-footnote">Showing 12 of {preview.records.length} cells.</p>}</div>}
+          {(employeeRows.length>0||unknownShifts.length>0)&&<div className="resolution-box"><div className="eyebrow">MATCH UNRECOGNIZED VALUES</div><p>Connect imported codes to the current team directory before confirming.</p>
+            {employeeRows.map(record=><label className="resolution-row" key={`emp-${record.rowNumber}`}><span>Row {record.rowNumber} · <b>{record.sourceEmployeeName||record.sourceEmployeeId||record.employeeName}</b>{!record.sourceEmployeeId?' · Missing ID':''}</span><select value={employeeMap[String(record.rowNumber)]||''} onChange={e=>setEmployeeMap(m=>({...m,[String(record.rowNumber)]:e.target.value}))}><option value="">Choose employee</option>{(employees.data||[]).map(e=><option key={e.id} value={e.id}>{e.fullName} · {e.employeeCode}</option>)}</select></label>)}
             {unknownShifts.map(code=><label className="resolution-row" key={`shift-${code}`}><span>Shift code <b>{code}</b></span><select value={shiftMap[code]||''} onChange={e=>setShiftMap(m=>({...m,[code]:e.target.value}))}><option value="">Choose shift type</option>{(shifts.data||[]).map(s=><option key={s.id} value={s.id}>{s.name} · {s.code}</option>)}</select></label>)}
             <button className="button button-secondary" disabled={unresolved||resolveMutation.isPending} onClick={resolve} data-testid="button-resolve-import">{resolveMutation.isPending?'Applying matches…':'Apply matches'}</button>
           </div>}
           {preview.issues.length>0&&<div className="issue-list">{preview.issues.map((issue,i)=><div className="issue-row" key={`${issue.code}-${i}`}><CircleAlert size={15}/><span>{issue.rowNumber?`Row ${issue.rowNumber}: `:''}{issue.message}</span></div>)}</div>}
-          <div className="confirm-import"><div className="confirm-options"><label className="form-field"><span>Apply to roster</span><select value={mode} onChange={e=>setMode(e.target.value as 'replace'|'merge')}><option value="replace">Replace this month</option><option value="merge">Merge with existing shifts</option></select></label>
+          <div className="confirm-import"><div className="confirm-options"><label className="form-field"><span>Apply to roster</span><select value={mode} onChange={e=>setMode(e.target.value as 'replace'|'merge')}><option value="replace">Replace this roster period</option><option value="merge">Merge with existing shifts</option></select></label>
             <label className="publish-toggle"><input type="checkbox" checked={publish} onChange={e=>setPublish(e.target.checked)}/><span><b>Publish immediately</b><small>Make this version visible to the team.</small></span></label></div>
             <button className="button button-primary" disabled={confirmMutation.isPending||preview.import.validCount===0||preview.import.issueCount>0||unresolved}
               onClick={()=>confirmMutation.mutate({importId:preview.import.id,data:{mode,publish}})} data-testid="button-confirm-import">{confirmMutation.isPending?'Saving roster…':'Confirm roster'} <Check size={16}/></button></div>
@@ -519,11 +538,11 @@ function ImportsPage() {
         </section>}
       </section>
       <aside className="import-aside"><section className="surface import-guidance"><div className="eyebrow">BEFORE YOU UPLOAD</div><h3>A careful review comes first.</h3>
-          <ul><li><i>1</i><span>Choose a month and upload the prepared roster.</span></li><li><i>2</i><span>Check the detected columns, names, and shift codes.</span></li><li><i>3</i><span>Resolve any unfamiliar values; preview does not publish.</span></li><li><i>4</i><span>Confirm merge or replace only when the preview is clean.</span></li></ul>
+          <ul><li><i>1</i><span>Upload the prepared roster; actual date cells determine its period.</span></li><li><i>2</i><span>Check the detected columns, names, and shift codes.</span></li><li><i>3</i><span>Resolve any unfamiliar values; preview does not publish.</span></li><li><i>4</i><span>Confirm merge or replace only when the preview is clean.</span></li></ul>
           <div className="guidance-note"><ShieldCheck size={17}/><span>Only a confirmed version can change the team schedule.</span></div></section>
         <section className="surface import-history"><div className="section-head"><div><div className="eyebrow">RECENT FILES</div><h3>Import history</h3></div></div>
           {imports.isLoading?<div className="mini-skeleton"><i/><i/><i/></div>:imports.isError?<QueryError message="Recent imports are unavailable." retry={()=>imports.refetch()}/>:!imports.data?.length?<p className="muted-copy">Uploaded roster files will be listed here.</p>:
-            <div className="import-history-list">{imports.data.slice(0,6).map(item=><div className="import-history-row" key={item.id}><FileSpreadsheet size={16}/><span><b>{monthLabel(item.month)}</b><small>{item.uploadedByName} · {item.rowCount} rows</small></span><em className={`import-state ${item.status}`}>{item.status.replace('_',' ')}</em></div>)}</div>}
+             <div className="import-history-list">{imports.data.slice(0,6).map(item=><div className="import-history-row" key={item.id}><FileSpreadsheet size={16}/><span><b>{item.periodStart&&item.periodEnd?`${item.periodStart} – ${item.periodEnd}`:monthLabel(item.month)}</b><small>{item.uploadedByName} · {item.rowCount} cells</small></span><em className={`import-state ${item.status}`}>{item.status.replace('_',' ')}</em></div>)}</div>}
         </section>
       </aside>
     </div>
@@ -553,7 +572,7 @@ function HistoryPage() {
   const updateAssignment=useUpdateRosterAssignment({mutation:{onSuccess:()=>{if(selectedVersionId)invalidate(getGetRosterVersionScheduleQueryKey(selectedVersionId));invalidateRosterReads();setEditAssignment(false);}}});
   const deleteAssignment=useDeleteRosterAssignment({mutation:{onSuccess:()=>{if(selectedVersionId)invalidate(getGetRosterVersionScheduleQueryKey(selectedVersionId));invalidateRosterReads();}}});
   const createDraft=()=>createVersion.mutate({data:{month,copyPublished:true}});
-  const assignments=versionSchedule.data?.assignments||[];
+  const assignments=versionSchedule.data?.assignments.filter(a=>a.displayInCalendar)||[];
   const activeVersion=versions.data?.find(v=>v.id===selectedVersionId);
   const saveAssignment=(data:Record<string,string>)=>{
     if(!selectedVersionId)return;
@@ -570,7 +589,7 @@ function HistoryPage() {
       <section className="version-list">{versions.data.map((v,i)=><article className={`version-card ${v.status==='published'?'version-published':''} ${selectedVersionId===v.id?'version-selected':''}`} key={v.id} data-testid={`row-version-${v.id}`}>
         <div className="version-line"><span className={`version-marker ${v.status}`}><i/></span><div className="version-main">
           <div className="version-title"><h2>Version {v.versionNumber}</h2><span className={`status-pill ${v.status==='published'?'status-live':v.status==='draft'?'status-draft':'status-archived'}`}><i/>{v.status}</span></div>
-          <p>{v.assignmentCount} assignments · Created by {v.createdByName}</p><small>{fmtDate(v.createdAt.slice(0,10),{day:'numeric',month:'long',year:'numeric'})} · {new Intl.DateTimeFormat('en',{hour:'numeric',minute:'2-digit',timeZone:'Asia/Qatar'}).format(new Date(v.createdAt))}</small>
+           <p>{v.assignmentCount} working shifts · {v.periodStart} – {v.periodEnd} · Created by {v.createdByName}</p><small>{fmtDate(v.createdAt.slice(0,10),{day:'numeric',month:'long',year:'numeric'})} · {new Intl.DateTimeFormat('en',{hour:'numeric',minute:'2-digit',timeZone:'Asia/Qatar'}).format(new Date(v.createdAt))}</small>
           {v.publishedAt&&<span className="version-published-at"><Check size={13}/> Published {fmtDate(v.publishedAt.slice(0,10),{day:'numeric',month:'short',year:'numeric'})}</span>}
         </div></div><div className="version-actions">
           <button className="button button-secondary button-small" onClick={()=>setSelectedVersionId(v.id)} data-testid={`button-preview-version-${v.id}`}>{selectedVersionId===v.id?'Viewing':'Preview'}</button>
@@ -590,7 +609,7 @@ function HistoryPage() {
         <div className="version-assignment-list">{assignments.map(a=><div key={a.id} className="version-assignment">
           <span className="version-assignment-date">{fmtDate(a.date,{weekday:'short',day:'numeric',month:'short'})}</span>
           <ShiftRow assignment={a} admin={activeVersion?.status==='draft'} onEdit={()=>setEditAssignment(a)}
-            onDelete={()=>{if(window.confirm(`Remove ${a.employeeName}’s ${a.shiftName} shift?`))deleteAssignment.mutate({versionId:selectedVersionId,assignmentId:a.id});}} />
+             onDelete={()=>{if(window.confirm(`Remove ${a.employeeName}’s ${a.shiftCode} assignment?`))deleteAssignment.mutate({versionId:selectedVersionId,assignmentId:a.id});}} />
         </div>)}</div>}
     </section>}
     {editAssignment!==false&&<FormModal title={editAssignment?'Edit draft assignment':'Add shift to draft'} description="These changes are saved to the selected draft version."

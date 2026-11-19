@@ -268,6 +268,7 @@ export async function parseRosterWorkbook(
     departmentColumn: departmentColumn ? headers[departmentColumn - 1] : null,
     dateColumn: dateColumn ? headers[dateColumn - 1] : null,
     shiftCodeColumn: shiftCodeColumn ? headers[shiftCodeColumn - 1] : null,
+    worksheetName: worksheet.name,
   };
 
   const employeeByCode = new Map(
@@ -370,12 +371,15 @@ export async function parseRosterWorkbook(
     records.push({
       rowNumber,
       date: dateValue,
+      sourceEmployeeId: employeeCode || null,
+      sourceEmployeeName: employeeName,
       employeeId: employee?.id ?? null,
       employeeCode: employeeCode || null,
       employeeName: employeeName || "Unmatched employee",
       departmentId,
       shiftTypeId: shift?.id ?? null,
       shiftCode,
+      rawShiftValue: cellText(rawShift),
       shiftName: shift?.name ?? null,
       valid: rowIssues.length === 0,
     });

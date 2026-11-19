@@ -12,6 +12,9 @@ export type ImportIssueCode = typeof ImportIssueCode[keyof typeof ImportIssueCod
 export const ImportIssueCode = {
   unknown_employee: 'unknown_employee',
   unknown_shift: 'unknown_shift',
+  unknown_department: 'unknown_department',
+  missing_employee_id: 'missing_employee_id',
+  competing_schedules: 'competing_schedules',
   duplicate: 'duplicate',
   invalid_date: 'invalid_date',
   missing_value: 'missing_value',

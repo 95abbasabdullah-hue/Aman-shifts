@@ -36,6 +36,7 @@ import {
 } from "@workspace/db";
 import { currentAppUser, requireAdmin } from "../lib/amanAuth";
 import { writeAuditLog } from "../lib/audit";
+import { DEFAULT_SHIFT_DEFINITIONS } from "../lib/shiftDefinitions";
 
 const router: IRouter = Router();
 
@@ -291,8 +292,12 @@ router.get("/shift-types", requireAdmin, async (_req, res): Promise<void> => {
     .select({
       id: shiftTypesTable.id,
       code: shiftTypesTable.code,
+      category: shiftTypesTable.category,
       name: shiftTypesTable.name,
+      meaning: shiftTypesTable.meaning,
       color: shiftTypesTable.color,
+      displayCode: shiftTypesTable.displayCode,
+      displayInCalendar: shiftTypesTable.displayInCalendar,
       startsAt: shiftTypesTable.startsAt,
       endsAt: shiftTypesTable.endsAt,
       active: shiftTypesTable.active,
@@ -344,6 +349,45 @@ router.patch(
           : params.error.message,
       });
       return;
+    }
+    const [existingShiftType] = await db
+      .select()
+      .from(shiftTypesTable)
+      .where(eq(shiftTypesTable.id, params.data.shiftTypeId))
+      .limit(1);
+    if (!existingShiftType) {
+      res.status(404).json({ error: "Shift type not found" });
+      return;
+    }
+    const officialDefinition = DEFAULT_SHIFT_DEFINITIONS.find(
+      (definition) => definition.code === existingShiftType.code,
+    );
+    if (officialDefinition) {
+      const changingIdentity =
+        (body.data.code && body.data.code.toUpperCase() !== officialDefinition.code) ||
+        (body.data.category && body.data.category !== officialDefinition.category) ||
+        body.data.active === false;
+      const changingOfficialWorkDefinition =
+        officialDefinition.category === "working" &&
+        ((body.data.name && body.data.name !== officialDefinition.name) ||
+          (body.data.meaning !== undefined &&
+            body.data.meaning !== officialDefinition.meaning) ||
+          (body.data.color && body.data.color !== officialDefinition.color) ||
+          (body.data.displayCode !== undefined &&
+            body.data.displayCode !== officialDefinition.displayCode) ||
+          (body.data.displayInCalendar !== undefined &&
+            body.data.displayInCalendar !== officialDefinition.displayInCalendar) ||
+          (body.data.startsAt !== undefined &&
+            body.data.startsAt !== officialDefinition.startsAt) ||
+          (body.data.endsAt !== undefined &&
+            body.data.endsAt !== officialDefinition.endsAt));
+      if (changingIdentity || changingOfficialWorkDefinition) {
+        res.status(400).json({
+          error:
+            "Official shift codes and working definitions are fixed; attendance display settings can be configured.",
+        });
+        return;
+      }
     }
     try {
       const [shiftType] = await db

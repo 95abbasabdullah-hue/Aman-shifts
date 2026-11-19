@@ -5,6 +5,7 @@
  * Aman Team Shifts API. All protected operations require a valid Clerk session and enforce application roles on the server.
  * OpenAPI spec version: 0.1.0
  */
+import type { ShiftAssignmentCategory } from './shiftAssignmentCategory';
 
 export interface ShiftAssignment {
   id: string;
@@ -18,6 +19,9 @@ export interface ShiftAssignment {
   shiftCode: string;
   shiftName: string;
   shiftColor: string;
+  category: ShiftAssignmentCategory;
+  displayInCalendar: boolean;
+  isWorking: boolean;
   /** @nullable */
   notes: string | null;
 }

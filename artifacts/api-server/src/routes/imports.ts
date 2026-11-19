@@ -23,6 +23,7 @@ import {
   appUsersTable,
   auditLogsTable,
   db,
+  departmentsTable,
   employeesTable,
   importJobsTable,
   rosterVersionsTable,
@@ -31,7 +32,8 @@ import {
 } from "@workspace/db";
 import { currentAppUser, requireAdmin } from "../lib/amanAuth";
 import { writeAuditLog } from "../lib/audit";
-import { parseRosterWorkbook } from "../lib/rosterImport";
+import { parseRosterWorkbook } from "../lib/rosterImportParser";
+import { normalizeShiftValue } from "../lib/shiftDefinitions";
 
 const router: IRouter = Router();
 const upload = multer({
@@ -60,6 +62,7 @@ const mappingJsonSchema = z.object({
   departmentColumn: z.string().nullable().default(null),
   dateColumn: z.string().nullable().default(null),
   shiftCodeColumn: z.string().nullable().default(null),
+  worksheetName: z.string().nullable().default(null),
 });
 
 const emptyMapping: ImportMapping = {
@@ -69,9 +72,45 @@ const emptyMapping: ImportMapping = {
   departmentColumn: null,
   dateColumn: null,
   shiftCodeColumn: null,
+  worksheetName: null,
 };
 
-type StoredPreview = Pick<ImportPreview, "columns" | "records" | "issues">;
+type StoredPreview = Pick<
+  ImportPreview,
+  | "columns"
+  | "records"
+  | "issues"
+  | "periodStart"
+  | "periodEnd"
+  | "selectedWorksheet"
+  | "worksheetChoices"
+>;
+
+function periodForMonth(month: string): { start: string; end: string } {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  return {
+    start: `${month}-01`,
+    end: `${month}-${String(lastDay).padStart(2, "0")}`,
+  };
+}
+
+function periodForVersion(
+  version: typeof rosterVersionsTable.$inferSelect,
+): { start: string; end: string } {
+  const fallback = periodForMonth(version.month);
+  return {
+    start: version.periodStart ?? fallback.start,
+    end: version.periodEnd ?? fallback.end,
+  };
+}
+
+function periodsOverlap(
+  left: { start: string; end: string },
+  right: { start: string; end: string },
+): boolean {
+  return left.start <= right.end && right.start <= left.end;
+}
 
 function readStoredPreview(value: Record<string, unknown>): StoredPreview {
   const preview = value as Partial<StoredPreview>;
@@ -82,6 +121,13 @@ function readStoredPreview(value: Record<string, unknown>): StoredPreview {
       : [],
     issues: Array.isArray(preview.issues)
       ? (preview.issues as ImportPreview["issues"])
+      : [],
+    periodStart: typeof preview.periodStart === "string" ? preview.periodStart : null,
+    periodEnd: typeof preview.periodEnd === "string" ? preview.periodEnd : null,
+    selectedWorksheet:
+      typeof preview.selectedWorksheet === "string" ? preview.selectedWorksheet : null,
+    worksheetChoices: Array.isArray(preview.worksheetChoices)
+      ? (preview.worksheetChoices as string[])
       : [],
   };
 }
@@ -95,6 +141,9 @@ async function importResponse(job: typeof importJobsTable.$inferSelect) {
   return {
     id: job.id,
     month: job.month,
+    periodStart: job.periodStart,
+    periodEnd: job.periodEnd,
+    selectedWorksheet: job.selectedWorksheet,
     status: job.status,
     uploadedByName: uploader?.fullName ?? "Aman admin",
     uploadedAt: job.uploadedAt.toISOString(),
@@ -113,6 +162,11 @@ async function previewResponse(
     import: await importResponse(job),
     columns: readStoredPreview(job.preview).columns,
     mapping: job.mapping,
+    periodStart: job.periodStart ?? readStoredPreview(job.preview).periodStart,
+    periodEnd: job.periodEnd ?? readStoredPreview(job.preview).periodEnd,
+    selectedWorksheet:
+      job.selectedWorksheet ?? readStoredPreview(job.preview).selectedWorksheet,
+    worksheetChoices: readStoredPreview(job.preview).worksheetChoices,
     records: readStoredPreview(job.preview).records,
     issues: readStoredPreview(job.preview).issues,
   });
@@ -129,10 +183,22 @@ async function findVersionResponse(
   const [assignmentCount] = await db
     .select({ count: count(shiftAssignmentsTable.id) })
     .from(shiftAssignmentsTable)
-    .where(eq(shiftAssignmentsTable.versionId, version.id));
+    .innerJoin(
+      shiftTypesTable,
+      eq(shiftTypesTable.id, shiftAssignmentsTable.shiftTypeId),
+    )
+    .where(
+      and(
+        eq(shiftAssignmentsTable.versionId, version.id),
+        eq(shiftTypesTable.category, "working"),
+      ),
+    );
+  const period = periodForVersion(version);
   return {
     id: version.id,
     month: version.month,
+    periodStart: period.start,
+    periodEnd: period.end,
     versionNumber: version.versionNumber,
     status: version.status as RosterVersion["status"],
     sourceImportId: version.sourceImportId,
@@ -220,22 +286,38 @@ router.post(
           id: shiftTypesTable.id,
           code: shiftTypesTable.code,
           name: shiftTypesTable.name,
+          category: shiftTypesTable.category,
+          displayCode: shiftTypesTable.displayCode,
         })
         .from(shiftTypesTable)
         .where(eq(shiftTypesTable.active, true));
+      const departments = await db
+        .select({
+          id: departmentsTable.id,
+          code: departmentsTable.code,
+          name: departmentsTable.name,
+        })
+        .from(departmentsTable)
+        .where(eq(departmentsTable.active, true));
       const parsed = await parseRosterWorkbook(
         req.file.buffer,
         parsedBody.data.month,
         mapping,
         employees,
         shiftTypes,
+        departments,
       );
       const user = currentAppUser(req);
       const status = parsed.issues.length ? "needs_review" : "ready";
+      const periodStart = parsed.periodStart;
+      const periodEnd = parsed.periodEnd;
       const [job] = await db
         .insert(importJobsTable)
         .values({
-          month: parsedBody.data.month,
+          month: periodStart?.slice(0, 7) ?? parsedBody.data.month,
+          periodStart,
+          periodEnd,
+          selectedWorksheet: parsed.selectedWorksheet,
           status,
           detectedFormat: parsed.format,
           uploadedBy: user.id,
@@ -247,13 +329,17 @@ router.post(
             columns: parsed.columns,
             records: parsed.records,
             issues: parsed.issues,
+            periodStart,
+            periodEnd,
+            selectedWorksheet: parsed.selectedWorksheet,
+            worksheetChoices: parsed.worksheetChoices,
           },
         })
         .returning();
       await writeAuditLog({
         actorUserId: user.id,
         action: "roster.import_previewed",
-        subject: `${parsedBody.data.month} · ${parsed.records.length} rows`,
+        subject: `${periodStart?.slice(0, 7) ?? parsedBody.data.month} · ${parsed.records.length} cells`,
       });
       res.status(201).json(await previewResponse(job));
     } catch (error) {
@@ -326,13 +412,16 @@ router.post(
       body.data.employees.map((entry) => [entry.rowNumber, entry.employeeId]),
     );
     const shiftMapping = new Map(
-      body.data.shiftCodes.map((entry) => [entry.shiftCode.toLowerCase(), entry.shiftTypeId]),
+      body.data.shiftCodes.map((entry) => [
+        normalizeShiftValue(entry.shiftCode),
+        entry.shiftTypeId,
+      ]),
     );
     const stored = readStoredPreview(job.preview);
     const records = stored.records.map((record) => {
       const employeeId = employeeMapping.get(record.rowNumber);
       const employee = employeeId ? employeeById.get(employeeId) : undefined;
-      const mappedShiftId = shiftMapping.get(record.shiftCode.toLowerCase());
+      const mappedShiftId = shiftMapping.get(normalizeShiftValue(record.shiftCode));
       const shift = mappedShiftId ? shiftById.get(mappedShiftId) : undefined;
       return {
         ...record,
@@ -347,14 +436,32 @@ router.post(
         ...(shift
           ? {
               shiftTypeId: shift.id,
+              shiftCode: shift.code,
               shiftName: shift.name,
             }
           : {}),
       };
     });
-    const issues = stored.issues.filter(
-      (item) => item.code !== "unknown_employee" && item.code !== "unknown_shift",
-    );
+    const resolvedEmployeeRows = new Set(employeeMapping.keys());
+    const resolvedShiftCodes = new Set(shiftMapping.keys());
+    const issues = stored.issues.filter((item) => {
+      const rowResolved =
+        item.rowNumber !== null && resolvedEmployeeRows.has(item.rowNumber);
+      if (
+        rowResolved &&
+        ["unknown_employee", "missing_employee_id", "unknown_department"].includes(item.code)
+      ) {
+        return false;
+      }
+      if (
+        item.code === "unknown_shift" &&
+        item.value &&
+        resolvedShiftCodes.has(normalizeShiftValue(item.value))
+      ) {
+        return false;
+      }
+      return true;
+    });
     for (const record of records) {
       if (!record.employeeId && (record.employeeCode || record.employeeName)) {
         issues.push({
@@ -373,20 +480,44 @@ router.post(
         });
       }
     }
+    const uniqueIssues = new Map<string, (typeof issues)[number]>();
+    for (const item of issues) {
+      uniqueIssues.set(
+        `${item.code}:${item.rowNumber ?? ""}:${item.value ?? ""}:${item.message}`,
+        item,
+      );
+    }
+    const resolvedIssues = [...uniqueIssues.values()];
     const issueRows = new Set(
-      issues.map((item) => item.rowNumber).filter((row): row is number => row !== null),
+      resolvedIssues
+        .map((item) => item.rowNumber)
+        .filter((row): row is number => row !== null),
     );
     for (const record of records) {
-      record.valid = !issueRows.has(record.rowNumber);
+      record.valid = Boolean(
+        record.employeeId &&
+          record.departmentId &&
+          record.shiftTypeId &&
+          record.date &&
+          !issueRows.has(record.rowNumber),
+      );
     }
-    const status = issues.length ? "needs_review" : "ready";
+    const status = resolvedIssues.length ? "needs_review" : "ready";
     const [updated] = await db
       .update(importJobsTable)
       .set({
         status,
         validCount: records.filter((record) => record.valid).length,
-        issueCount: issues.length,
-        preview: { columns: stored.columns, records, issues },
+        issueCount: resolvedIssues.length,
+        preview: {
+          columns: stored.columns,
+          records,
+          issues: resolvedIssues,
+          periodStart: stored.periodStart,
+          periodEnd: stored.periodEnd,
+          selectedWorksheet: stored.selectedWorksheet,
+          worksheetChoices: stored.worksheetChoices,
+        },
         mapping: job.mapping,
       })
       .where(eq(importJobsTable.id, job.id))
@@ -435,30 +566,21 @@ router.post(
       return;
     }
     const user = currentAppUser(req);
+    const fallbackPeriod = periodForMonth(job.month);
+    const importPeriod = {
+      start: job.periodStart ?? fallbackPeriod.start,
+      end: job.periodEnd ?? fallbackPeriod.end,
+    };
     const version = await db.transaction(async (tx) => {
-      const [currentDraft] = await tx
+      const activeVersions = await tx
         .select()
         .from(rosterVersionsTable)
-        .where(
-          and(
-            eq(rosterVersionsTable.month, job.month),
-            eq(rosterVersionsTable.status, "draft"),
-          ),
+        .where(inArray(rosterVersionsTable.status, ["draft", "published"]));
+      const overlappingVersions = activeVersions
+        .filter((candidate) =>
+          periodsOverlap(importPeriod, periodForVersion(candidate)),
         )
-        .orderBy(desc(rosterVersionsTable.versionNumber))
-        .limit(1);
-      const [currentPublished] = await tx
-        .select()
-        .from(rosterVersionsTable)
-        .where(
-          and(
-            eq(rosterVersionsTable.month, job.month),
-            eq(rosterVersionsTable.status, "published"),
-          ),
-        )
-        .orderBy(desc(rosterVersionsTable.versionNumber))
-        .limit(1);
-      const baseVersion = currentDraft ?? currentPublished;
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
       const [maxVersion] = await tx
         .select({ number: rosterVersionsTable.versionNumber })
         .from(rosterVersionsTable)
@@ -468,7 +590,9 @@ router.post(
       const [created] = await tx
         .insert(rosterVersionsTable)
         .values({
-          month: job.month,
+          month: importPeriod.start.slice(0, 7),
+          periodStart: importPeriod.start,
+          periodEnd: importPeriod.end,
           versionNumber: (maxVersion?.number ?? 0) + 1,
           status: "draft",
           sourceImportId: job.id,
@@ -476,38 +600,75 @@ router.post(
         })
         .returning();
 
-      let assignments: Array<{
+      type AssignmentToCopy = {
         employeeId: string;
         shiftTypeId: string;
         date: string;
+        sourceEmployeeId: string | null;
+        sourceEmployeeName: string | null;
+        sourceRawShiftValue: string | null;
         notes: string | null;
-      }> = [];
-      if (body.data.mode === "merge" && baseVersion) {
-        assignments = await tx
+      };
+      const assignmentsByEmployeeDate = new Map<string, AssignmentToCopy>();
+      if (overlappingVersions.length) {
+        const versionIds = overlappingVersions.map((candidate) => candidate.id);
+        const existingAssignments = await tx
           .select({
+            versionId: shiftAssignmentsTable.versionId,
             employeeId: shiftAssignmentsTable.employeeId,
             shiftTypeId: shiftAssignmentsTable.shiftTypeId,
             date: shiftAssignmentsTable.date,
+            sourceEmployeeId: shiftAssignmentsTable.sourceEmployeeId,
+            sourceEmployeeName: shiftAssignmentsTable.sourceEmployeeName,
+            sourceRawShiftValue: shiftAssignmentsTable.sourceRawShiftValue,
             notes: shiftAssignmentsTable.notes,
           })
           .from(shiftAssignmentsTable)
-          .where(eq(shiftAssignmentsTable.versionId, baseVersion.id));
+          .where(inArray(shiftAssignmentsTable.versionId, versionIds));
+        const versionRank = new Map(
+          overlappingVersions.map((candidate, index) => [candidate.id, index]),
+        );
+        existingAssignments.sort(
+          (a, b) =>
+            (versionRank.get(a.versionId) ?? 0) -
+            (versionRank.get(b.versionId) ?? 0),
+        );
+        for (const existing of existingAssignments) {
+          const isOutsideImport =
+            existing.date < importPeriod.start || existing.date > importPeriod.end;
+          if (body.data.mode === "replace" && !isOutsideImport) continue;
+          assignmentsByEmployeeDate.set(
+            `${existing.employeeId}:${existing.date}`,
+            {
+              employeeId: existing.employeeId,
+              shiftTypeId: existing.shiftTypeId,
+              date: existing.date,
+              sourceEmployeeId: existing.sourceEmployeeId,
+              sourceEmployeeName: existing.sourceEmployeeName,
+              sourceRawShiftValue: existing.sourceRawShiftValue,
+              notes: existing.notes,
+            },
+          );
+        }
       }
 
       for (const record of records) {
-        const incoming = {
+        const incoming: AssignmentToCopy = {
           employeeId: record.employeeId as string,
           shiftTypeId: record.shiftTypeId as string,
           date: record.date as string,
+          sourceEmployeeId: record.sourceEmployeeId,
+          sourceEmployeeName: record.sourceEmployeeName,
+          sourceRawShiftValue: record.rawShiftValue,
           notes: null,
         };
-        assignments = assignments.filter(
-          (existing) =>
-            existing.employeeId !== incoming.employeeId ||
-            existing.date !== incoming.date,
+        assignmentsByEmployeeDate.set(
+          `${incoming.employeeId}:${incoming.date}`,
+          incoming,
         );
-        assignments.push(incoming);
       }
+
+      const assignments = [...assignmentsByEmployeeDate.values()];
       if (assignments.length) {
         await tx.insert(shiftAssignmentsTable).values(
           assignments.map((assignment) => ({
@@ -519,15 +680,15 @@ router.post(
 
       let finalVersion = created;
       if (body.data.publish) {
-        await tx
-          .update(rosterVersionsTable)
-          .set({ status: "archived" })
-          .where(
-            and(
-              eq(rosterVersionsTable.month, job.month),
-              eq(rosterVersionsTable.status, "published"),
-            ),
-          );
+        const publishedIds = overlappingVersions
+          .filter((candidate) => candidate.status === "published")
+          .map((candidate) => candidate.id);
+        if (publishedIds.length) {
+          await tx
+            .update(rosterVersionsTable)
+            .set({ status: "archived" })
+            .where(inArray(rosterVersionsTable.id, publishedIds));
+        }
         [finalVersion] = await tx
           .update(rosterVersionsTable)
           .set({
@@ -548,8 +709,13 @@ router.post(
       await tx.insert(auditLogsTable).values({
         actorUserId: user.id,
         action: "roster.import_confirmed",
-        subject: `${job.month} · v${created.versionNumber}`,
-        details: { mode: body.data.mode, published: body.data.publish },
+        subject: `${importPeriod.start}–${importPeriod.end} · v${created.versionNumber}`,
+        details: {
+          mode: body.data.mode,
+          published: body.data.publish,
+          periodStart: importPeriod.start,
+          periodEnd: importPeriod.end,
+        },
       });
       return finalVersion;
     });

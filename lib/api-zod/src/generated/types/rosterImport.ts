@@ -11,6 +11,12 @@ import type { RosterImportStatus } from './rosterImportStatus';
 export interface RosterImport {
   id: string;
   month: string;
+  /** @nullable */
+  periodStart: string | null;
+  /** @nullable */
+  periodEnd: string | null;
+  /** @nullable */
+  selectedWorksheet: string | null;
   status: RosterImportStatus;
   uploadedByName: string;
   uploadedAt: string;

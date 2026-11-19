@@ -144,12 +144,26 @@ export interface EmployeeUpdate {
   active?: boolean;
 }
 
+export type ShiftTypeCategory = typeof ShiftTypeCategory[keyof typeof ShiftTypeCategory];
+
+
+export const ShiftTypeCategory = {
+  working: 'working',
+  attendance: 'attendance',
+} as const;
+
 export interface ShiftType {
   id: string;
   code: string;
+  category: ShiftTypeCategory;
   name: string;
+  /** @nullable */
+  meaning: string | null;
   /** @pattern ^#[0-9A-Fa-f]{6}$ */
   color: string;
+  /** @nullable */
+  displayCode: string | null;
+  displayInCalendar: boolean;
   /**
      * @nullable
      * @pattern ^\d{2}:\d{2}$
@@ -163,19 +177,39 @@ export interface ShiftType {
   active: boolean;
 }
 
+export type ShiftTypeInputCategory = typeof ShiftTypeInputCategory[keyof typeof ShiftTypeInputCategory];
+
+
+export const ShiftTypeInputCategory = {
+  working: 'working',
+  attendance: 'attendance',
+} as const;
+
 export interface ShiftTypeInput {
   /**
      * @minLength 1
      * @maxLength 20
      */
   code: string;
+  category?: ShiftTypeInputCategory;
   /**
      * @minLength 1
      * @maxLength 100
      */
   name: string;
+  /**
+     * @maxLength 240
+     * @nullable
+     */
+  meaning?: string | null;
   /** @pattern ^#[0-9A-Fa-f]{6}$ */
   color: string;
+  /**
+     * @maxLength 20
+     * @nullable
+     */
+  displayCode?: string | null;
+  displayInCalendar?: boolean;
   /**
      * @nullable
      * @pattern ^\d{2}:\d{2}$
@@ -188,19 +222,39 @@ export interface ShiftTypeInput {
   endsAt?: string | null;
 }
 
+export type ShiftTypeUpdateCategory = typeof ShiftTypeUpdateCategory[keyof typeof ShiftTypeUpdateCategory];
+
+
+export const ShiftTypeUpdateCategory = {
+  working: 'working',
+  attendance: 'attendance',
+} as const;
+
 export interface ShiftTypeUpdate {
   /**
      * @minLength 1
      * @maxLength 20
      */
   code?: string;
+  category?: ShiftTypeUpdateCategory;
   /**
      * @minLength 1
      * @maxLength 100
      */
   name?: string;
+  /**
+     * @maxLength 240
+     * @nullable
+     */
+  meaning?: string | null;
   /** @pattern ^#[0-9A-Fa-f]{6}$ */
   color?: string;
+  /**
+     * @maxLength 20
+     * @nullable
+     */
+  displayCode?: string | null;
+  displayInCalendar?: boolean;
   /**
      * @nullable
      * @pattern ^\d{2}:\d{2}$
@@ -214,6 +268,14 @@ export interface ShiftTypeUpdate {
   active?: boolean;
 }
 
+export type ShiftAssignmentCategory = typeof ShiftAssignmentCategory[keyof typeof ShiftAssignmentCategory];
+
+
+export const ShiftAssignmentCategory = {
+  working: 'working',
+  attendance: 'attendance',
+} as const;
+
 export interface ShiftAssignment {
   id: string;
   date: string;
@@ -226,6 +288,9 @@ export interface ShiftAssignment {
   shiftCode: string;
   shiftName: string;
   shiftColor: string;
+  category: ShiftAssignmentCategory;
+  displayInCalendar: boolean;
+  isWorking: boolean;
   /** @nullable */
   notes: string | null;
 }
@@ -245,6 +310,10 @@ export interface ScheduleResponse {
   versionId: string | null;
   /** @nullable */
   versionNumber: number | null;
+  /** @nullable */
+  periodStart: string | null;
+  /** @nullable */
+  periodEnd: string | null;
   assignments: ShiftAssignment[];
 }
 
@@ -270,6 +339,12 @@ export const RosterImportDetectedFormat = {
 export interface RosterImport {
   id: string;
   month: string;
+  /** @nullable */
+  periodStart: string | null;
+  /** @nullable */
+  periodEnd: string | null;
+  /** @nullable */
+  selectedWorksheet: string | null;
   status: RosterImportStatus;
   uploadedByName: string;
   uploadedAt: string;
@@ -287,6 +362,9 @@ export type ImportIssueCode = typeof ImportIssueCode[keyof typeof ImportIssueCod
 export const ImportIssueCode = {
   unknown_employee: 'unknown_employee',
   unknown_shift: 'unknown_shift',
+  unknown_department: 'unknown_department',
+  missing_employee_id: 'missing_employee_id',
+  competing_schedules: 'competing_schedules',
   duplicate: 'duplicate',
   invalid_date: 'invalid_date',
   missing_value: 'missing_value',
@@ -323,12 +401,17 @@ export interface ImportMapping {
   dateColumn: string | null;
   /** @nullable */
   shiftCodeColumn: string | null;
+  /** @nullable */
+  worksheetName: string | null;
 }
 
 export interface StagedAssignment {
   rowNumber: number;
   /** @nullable */
   date: string | null;
+  /** @nullable */
+  sourceEmployeeId: string | null;
+  sourceEmployeeName: string;
   /** @nullable */
   employeeId: string | null;
   /** @nullable */
@@ -339,6 +422,7 @@ export interface StagedAssignment {
   /** @nullable */
   shiftTypeId: string | null;
   shiftCode: string;
+  rawShiftValue: string;
   /** @nullable */
   shiftName: string | null;
   valid: boolean;
@@ -348,6 +432,13 @@ export interface ImportPreview {
   import: RosterImport;
   columns: string[];
   mapping: ImportMapping;
+  /** @nullable */
+  periodStart: string | null;
+  /** @nullable */
+  periodEnd: string | null;
+  /** @nullable */
+  selectedWorksheet: string | null;
+  worksheetChoices: string[];
   records: StagedAssignment[];
   issues: ImportIssue[];
 }
@@ -401,6 +492,8 @@ export const RosterVersionStatus = {
 export interface RosterVersion {
   id: string;
   month: string;
+  periodStart: string;
+  periodEnd: string;
   versionNumber: number;
   status: RosterVersionStatus;
   /** @nullable */

@@ -15,5 +15,9 @@ export interface ScheduleResponse {
   versionId: string | null;
   /** @nullable */
   versionNumber: number | null;
+  /** @nullable */
+  periodStart: string | null;
+  /** @nullable */
+  periodEnd: string | null;
   assignments: ShiftAssignment[];
 }

@@ -245,8 +245,12 @@ export const listShiftTypesResponseEndsAtRegExp = new RegExp('^\\d{2}:\\d{2}$');
 export const ListShiftTypesResponseItem = zod.object({
   "id": zod.string(),
   "code": zod.string(),
+  "category": zod.enum(['working', 'attendance']),
   "name": zod.string(),
+  "meaning": zod.string().nullable(),
   "color": zod.string().regex(listShiftTypesResponseColorRegExp),
+  "displayCode": zod.string().nullable(),
+  "displayInCalendar": zod.boolean(),
   "startsAt": zod.string().regex(listShiftTypesResponseStartsAtRegExp).nullable(),
   "endsAt": zod.string().regex(listShiftTypesResponseEndsAtRegExp).nullable(),
   "active": zod.boolean()
@@ -261,15 +265,23 @@ export const createShiftTypeBodyCodeMax = 20;
 
 export const createShiftTypeBodyNameMax = 100;
 
+export const createShiftTypeBodyMeaningMax = 240;
+
 export const createShiftTypeBodyColorRegExp = new RegExp('^#[0-9A-Fa-f]{6}$');
+export const createShiftTypeBodyDisplayCodeMax = 20;
+
 export const createShiftTypeBodyStartsAtRegExp = new RegExp('^\\d{2}:\\d{2}$');
 export const createShiftTypeBodyEndsAtRegExp = new RegExp('^\\d{2}:\\d{2}$');
 
 
 export const CreateShiftTypeBody = zod.object({
   "code": zod.string().min(1).max(createShiftTypeBodyCodeMax),
+  "category": zod.enum(['working', 'attendance']).optional(),
   "name": zod.string().min(1).max(createShiftTypeBodyNameMax),
+  "meaning": zod.string().max(createShiftTypeBodyMeaningMax).nullish(),
   "color": zod.string().regex(createShiftTypeBodyColorRegExp),
+  "displayCode": zod.string().max(createShiftTypeBodyDisplayCodeMax).nullish(),
+  "displayInCalendar": zod.boolean().optional(),
   "startsAt": zod.string().regex(createShiftTypeBodyStartsAtRegExp).nullish(),
   "endsAt": zod.string().regex(createShiftTypeBodyEndsAtRegExp).nullish()
 })
@@ -282,8 +294,12 @@ export const createShiftTypeResponseEndsAtRegExp = new RegExp('^\\d{2}:\\d{2}$')
 export const CreateShiftTypeResponse = zod.object({
   "id": zod.string(),
   "code": zod.string(),
+  "category": zod.enum(['working', 'attendance']),
   "name": zod.string(),
+  "meaning": zod.string().nullable(),
   "color": zod.string().regex(createShiftTypeResponseColorRegExp),
+  "displayCode": zod.string().nullable(),
+  "displayInCalendar": zod.boolean(),
   "startsAt": zod.string().regex(createShiftTypeResponseStartsAtRegExp).nullable(),
   "endsAt": zod.string().regex(createShiftTypeResponseEndsAtRegExp).nullable(),
   "active": zod.boolean()
@@ -301,15 +317,23 @@ export const updateShiftTypeBodyCodeMax = 20;
 
 export const updateShiftTypeBodyNameMax = 100;
 
+export const updateShiftTypeBodyMeaningMax = 240;
+
 export const updateShiftTypeBodyColorRegExp = new RegExp('^#[0-9A-Fa-f]{6}$');
+export const updateShiftTypeBodyDisplayCodeMax = 20;
+
 export const updateShiftTypeBodyStartsAtRegExp = new RegExp('^\\d{2}:\\d{2}$');
 export const updateShiftTypeBodyEndsAtRegExp = new RegExp('^\\d{2}:\\d{2}$');
 
 
 export const UpdateShiftTypeBody = zod.object({
   "code": zod.string().min(1).max(updateShiftTypeBodyCodeMax).optional(),
+  "category": zod.enum(['working', 'attendance']).optional(),
   "name": zod.string().min(1).max(updateShiftTypeBodyNameMax).optional(),
+  "meaning": zod.string().max(updateShiftTypeBodyMeaningMax).nullish(),
   "color": zod.string().regex(updateShiftTypeBodyColorRegExp).optional(),
+  "displayCode": zod.string().max(updateShiftTypeBodyDisplayCodeMax).nullish(),
+  "displayInCalendar": zod.boolean().optional(),
   "startsAt": zod.string().regex(updateShiftTypeBodyStartsAtRegExp).nullish(),
   "endsAt": zod.string().regex(updateShiftTypeBodyEndsAtRegExp).nullish(),
   "active": zod.boolean().optional()
@@ -323,8 +347,12 @@ export const updateShiftTypeResponseEndsAtRegExp = new RegExp('^\\d{2}:\\d{2}$')
 export const UpdateShiftTypeResponse = zod.object({
   "id": zod.string(),
   "code": zod.string(),
+  "category": zod.enum(['working', 'attendance']),
   "name": zod.string(),
+  "meaning": zod.string().nullable(),
   "color": zod.string().regex(updateShiftTypeResponseColorRegExp),
+  "displayCode": zod.string().nullable(),
+  "displayInCalendar": zod.boolean(),
   "startsAt": zod.string().regex(updateShiftTypeResponseStartsAtRegExp).nullable(),
   "endsAt": zod.string().regex(updateShiftTypeResponseEndsAtRegExp).nullable(),
   "active": zod.boolean()
@@ -347,6 +375,8 @@ export const GetMonthlyScheduleResponse = zod.object({
   "status": zod.enum(['draft', 'published']),
   "versionId": zod.string().nullable(),
   "versionNumber": zod.number().int().nullable(),
+  "periodStart": zod.string().date().nullable(),
+  "periodEnd": zod.string().date().nullable(),
   "assignments": zod.array(zod.object({
   "id": zod.string(),
   "date": zod.string().date(),
@@ -359,6 +389,9 @@ export const GetMonthlyScheduleResponse = zod.object({
   "shiftCode": zod.string(),
   "shiftName": zod.string(),
   "shiftColor": zod.string(),
+  "category": zod.enum(['working', 'attendance']),
+  "displayInCalendar": zod.boolean(),
+  "isWorking": zod.boolean(),
   "notes": zod.string().nullable()
 }))
 })
@@ -379,6 +412,8 @@ export const GetMyScheduleResponse = zod.object({
   "status": zod.enum(['draft', 'published']),
   "versionId": zod.string().nullable(),
   "versionNumber": zod.number().int().nullable(),
+  "periodStart": zod.string().date().nullable(),
+  "periodEnd": zod.string().date().nullable(),
   "assignments": zod.array(zod.object({
   "id": zod.string(),
   "date": zod.string().date(),
@@ -391,6 +426,9 @@ export const GetMyScheduleResponse = zod.object({
   "shiftCode": zod.string(),
   "shiftName": zod.string(),
   "shiftColor": zod.string(),
+  "category": zod.enum(['working', 'attendance']),
+  "displayInCalendar": zod.boolean(),
+  "isWorking": zod.boolean(),
   "notes": zod.string().nullable()
 }))
 })
@@ -402,6 +440,9 @@ export const GetMyScheduleResponse = zod.object({
 export const ListRosterImportsResponseItem = zod.object({
   "id": zod.string(),
   "month": zod.string(),
+  "periodStart": zod.string().date().nullable(),
+  "periodEnd": zod.string().date().nullable(),
+  "selectedWorksheet": zod.string().nullable(),
   "status": zod.enum(['needs_review', 'ready', 'committed', 'rejected']),
   "uploadedByName": zod.string(),
   "uploadedAt": zod.string().datetime({"offset":true}),
@@ -432,6 +473,9 @@ export const PreviewRosterImportResponse = zod.object({
   "import": zod.object({
   "id": zod.string(),
   "month": zod.string(),
+  "periodStart": zod.string().date().nullable(),
+  "periodEnd": zod.string().date().nullable(),
+  "selectedWorksheet": zod.string().nullable(),
   "status": zod.enum(['needs_review', 'ready', 'committed', 'rejected']),
   "uploadedByName": zod.string(),
   "uploadedAt": zod.string().datetime({"offset":true}),
@@ -448,22 +492,30 @@ export const PreviewRosterImportResponse = zod.object({
   "employeeNameColumn": zod.string().nullable(),
   "departmentColumn": zod.string().nullable(),
   "dateColumn": zod.string().nullable(),
-  "shiftCodeColumn": zod.string().nullable()
+  "shiftCodeColumn": zod.string().nullable(),
+  "worksheetName": zod.string().nullable()
 }),
+  "periodStart": zod.string().date().nullable(),
+  "periodEnd": zod.string().date().nullable(),
+  "selectedWorksheet": zod.string().nullable(),
+  "worksheetChoices": zod.array(zod.string()),
   "records": zod.array(zod.object({
   "rowNumber": zod.number().int(),
   "date": zod.string().date().nullable(),
+  "sourceEmployeeId": zod.string().nullable(),
+  "sourceEmployeeName": zod.string(),
   "employeeId": zod.string().nullable(),
   "employeeCode": zod.string().nullable(),
   "employeeName": zod.string(),
   "departmentId": zod.string().nullable(),
   "shiftTypeId": zod.string().nullable(),
   "shiftCode": zod.string(),
+  "rawShiftValue": zod.string(),
   "shiftName": zod.string().nullable(),
   "valid": zod.boolean()
 })),
   "issues": zod.array(zod.object({
-  "code": zod.enum(['unknown_employee', 'unknown_shift', 'duplicate', 'invalid_date', 'missing_value', 'unsupported_sheet']),
+  "code": zod.enum(['unknown_employee', 'unknown_shift', 'unknown_department', 'missing_employee_id', 'competing_schedules', 'duplicate', 'invalid_date', 'missing_value', 'unsupported_sheet']),
   "message": zod.string(),
   "rowNumber": zod.number().int().nullable(),
   "value": zod.string().nullable()
@@ -496,6 +548,9 @@ export const ResolveRosterImportResponse = zod.object({
   "import": zod.object({
   "id": zod.string(),
   "month": zod.string(),
+  "periodStart": zod.string().date().nullable(),
+  "periodEnd": zod.string().date().nullable(),
+  "selectedWorksheet": zod.string().nullable(),
   "status": zod.enum(['needs_review', 'ready', 'committed', 'rejected']),
   "uploadedByName": zod.string(),
   "uploadedAt": zod.string().datetime({"offset":true}),
@@ -512,22 +567,30 @@ export const ResolveRosterImportResponse = zod.object({
   "employeeNameColumn": zod.string().nullable(),
   "departmentColumn": zod.string().nullable(),
   "dateColumn": zod.string().nullable(),
-  "shiftCodeColumn": zod.string().nullable()
+  "shiftCodeColumn": zod.string().nullable(),
+  "worksheetName": zod.string().nullable()
 }),
+  "periodStart": zod.string().date().nullable(),
+  "periodEnd": zod.string().date().nullable(),
+  "selectedWorksheet": zod.string().nullable(),
+  "worksheetChoices": zod.array(zod.string()),
   "records": zod.array(zod.object({
   "rowNumber": zod.number().int(),
   "date": zod.string().date().nullable(),
+  "sourceEmployeeId": zod.string().nullable(),
+  "sourceEmployeeName": zod.string(),
   "employeeId": zod.string().nullable(),
   "employeeCode": zod.string().nullable(),
   "employeeName": zod.string(),
   "departmentId": zod.string().nullable(),
   "shiftTypeId": zod.string().nullable(),
   "shiftCode": zod.string(),
+  "rawShiftValue": zod.string(),
   "shiftName": zod.string().nullable(),
   "valid": zod.boolean()
 })),
   "issues": zod.array(zod.object({
-  "code": zod.enum(['unknown_employee', 'unknown_shift', 'duplicate', 'invalid_date', 'missing_value', 'unsupported_sheet']),
+  "code": zod.enum(['unknown_employee', 'unknown_shift', 'unknown_department', 'missing_employee_id', 'competing_schedules', 'duplicate', 'invalid_date', 'missing_value', 'unsupported_sheet']),
   "message": zod.string(),
   "rowNumber": zod.number().int().nullable(),
   "value": zod.string().nullable()
@@ -552,6 +615,8 @@ export const ConfirmRosterImportBody = zod.object({
 export const ConfirmRosterImportResponse = zod.object({
   "id": zod.string(),
   "month": zod.string(),
+  "periodStart": zod.string().date(),
+  "periodEnd": zod.string().date(),
   "versionNumber": zod.number().int(),
   "status": zod.enum(['draft', 'published', 'archived']),
   "sourceImportId": zod.string().nullable(),
@@ -575,6 +640,8 @@ export const ListRosterVersionsQueryParams = zod.object({
 export const ListRosterVersionsResponseItem = zod.object({
   "id": zod.string(),
   "month": zod.string(),
+  "periodStart": zod.string().date(),
+  "periodEnd": zod.string().date(),
   "versionNumber": zod.number().int(),
   "status": zod.enum(['draft', 'published', 'archived']),
   "sourceImportId": zod.string().nullable(),
@@ -600,6 +667,8 @@ export const CreateRosterVersionBody = zod.object({
 export const CreateRosterVersionResponse = zod.object({
   "id": zod.string(),
   "month": zod.string(),
+  "periodStart": zod.string().date(),
+  "periodEnd": zod.string().date(),
   "versionNumber": zod.number().int(),
   "status": zod.enum(['draft', 'published', 'archived']),
   "sourceImportId": zod.string().nullable(),
@@ -622,6 +691,8 @@ export const GetRosterVersionScheduleResponse = zod.object({
   "status": zod.enum(['draft', 'published']),
   "versionId": zod.string().nullable(),
   "versionNumber": zod.number().int().nullable(),
+  "periodStart": zod.string().date().nullable(),
+  "periodEnd": zod.string().date().nullable(),
   "assignments": zod.array(zod.object({
   "id": zod.string(),
   "date": zod.string().date(),
@@ -634,6 +705,9 @@ export const GetRosterVersionScheduleResponse = zod.object({
   "shiftCode": zod.string(),
   "shiftName": zod.string(),
   "shiftColor": zod.string(),
+  "category": zod.enum(['working', 'attendance']),
+  "displayInCalendar": zod.boolean(),
+  "isWorking": zod.boolean(),
   "notes": zod.string().nullable()
 }))
 })
@@ -649,6 +723,8 @@ export const PublishRosterVersionParams = zod.object({
 export const PublishRosterVersionResponse = zod.object({
   "id": zod.string(),
   "month": zod.string(),
+  "periodStart": zod.string().date(),
+  "periodEnd": zod.string().date(),
   "versionNumber": zod.number().int(),
   "status": zod.enum(['draft', 'published', 'archived']),
   "sourceImportId": zod.string().nullable(),
@@ -678,6 +754,8 @@ export const RollbackRosterVersionBody = zod.object({
 export const RollbackRosterVersionResponse = zod.object({
   "id": zod.string(),
   "month": zod.string(),
+  "periodStart": zod.string().date(),
+  "periodEnd": zod.string().date(),
   "versionNumber": zod.number().int(),
   "status": zod.enum(['draft', 'published', 'archived']),
   "sourceImportId": zod.string().nullable(),
@@ -714,6 +792,9 @@ export const CreateRosterAssignmentResponse = zod.object({
   "shiftCode": zod.string(),
   "shiftName": zod.string(),
   "shiftColor": zod.string(),
+  "category": zod.enum(['working', 'attendance']),
+  "displayInCalendar": zod.boolean(),
+  "isWorking": zod.boolean(),
   "notes": zod.string().nullable()
 })
 
@@ -745,6 +826,9 @@ export const UpdateRosterAssignmentResponse = zod.object({
   "shiftCode": zod.string(),
   "shiftName": zod.string(),
   "shiftColor": zod.string(),
+  "category": zod.enum(['working', 'attendance']),
+  "displayInCalendar": zod.boolean(),
+  "isWorking": zod.boolean(),
   "notes": zod.string().nullable()
 })
 

@@ -14,6 +14,13 @@ export interface ImportPreview {
   import: RosterImport;
   columns: string[];
   mapping: ImportMapping;
+  /** @nullable */
+  periodStart: string | null;
+  /** @nullable */
+  periodEnd: string | null;
+  /** @nullable */
+  selectedWorksheet: string | null;
+  worksheetChoices: string[];
   records: StagedAssignment[];
   issues: ImportIssue[];
 }

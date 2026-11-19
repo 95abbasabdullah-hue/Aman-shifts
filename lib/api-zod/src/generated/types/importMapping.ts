@@ -19,4 +19,6 @@ export interface ImportMapping {
   dateColumn: string | null;
   /** @nullable */
   shiftCodeColumn: string | null;
+  /** @nullable */
+  worksheetName: string | null;
 }

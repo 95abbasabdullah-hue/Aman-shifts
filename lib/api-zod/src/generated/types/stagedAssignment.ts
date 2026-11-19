@@ -11,6 +11,9 @@ export interface StagedAssignment {
   /** @nullable */
   date: string | null;
   /** @nullable */
+  sourceEmployeeId: string | null;
+  sourceEmployeeName: string;
+  /** @nullable */
   employeeId: string | null;
   /** @nullable */
   employeeCode: string | null;
@@ -20,6 +23,7 @@ export interface StagedAssignment {
   /** @nullable */
   shiftTypeId: string | null;
   shiftCode: string;
+  rawShiftValue: string;
   /** @nullable */
   shiftName: string | null;
   valid: boolean;

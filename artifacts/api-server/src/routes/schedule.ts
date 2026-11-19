@@ -5,7 +5,9 @@ import {
   count,
   desc,
   eq,
+  gte,
   inArray,
+  lte,
 } from "drizzle-orm";
 import {
   CreateRosterAssignmentBody,
@@ -51,12 +53,41 @@ import { writeAuditLog } from "../lib/audit";
 
 const router: IRouter = Router();
 
+function periodForMonth(month: string): { start: string; end: string } {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  return {
+    start: `${month}-01`,
+    end: `${month}-${String(lastDay).padStart(2, "0")}`,
+  };
+}
+
+function periodForVersion(
+  version: typeof rosterVersionsTable.$inferSelect,
+): { start: string; end: string } {
+  const fallback = periodForMonth(version.month);
+  return {
+    start: version.periodStart ?? fallback.start,
+    end: version.periodEnd ?? fallback.end,
+  };
+}
+
+function periodsOverlap(
+  left: { start: string; end: string },
+  right: { start: string; end: string },
+): boolean {
+  return left.start <= right.end && right.start <= left.end;
+}
+
 async function versionsForMonth(month: string) {
-  return db
+  const requestedPeriod = periodForMonth(month);
+  const versions = await db
     .select()
     .from(rosterVersionsTable)
-    .where(eq(rosterVersionsTable.month, month))
-    .orderBy(desc(rosterVersionsTable.versionNumber));
+    .orderBy(desc(rosterVersionsTable.createdAt));
+  return versions.filter((version) =>
+    periodsOverlap(requestedPeriod, periodForVersion(version)),
+  );
 }
 
 async function visibleVersion(month: string, admin: boolean) {
@@ -72,8 +103,16 @@ async function scheduleAssignments(
   versionId: string,
   departmentId?: string,
   employeeId?: string,
+  month?: string,
 ) {
   const conditions = [eq(shiftAssignmentsTable.versionId, versionId)];
+  if (month) {
+    const period = periodForMonth(month);
+    conditions.push(
+      gte(shiftAssignmentsTable.date, period.start),
+      lte(shiftAssignmentsTable.date, period.end),
+    );
+  }
   if (departmentId) {
     conditions.push(eq(employeesTable.departmentId, departmentId));
   }
@@ -91,9 +130,12 @@ async function scheduleAssignments(
       departmentId: departmentsTable.id,
       departmentName: departmentsTable.name,
       shiftTypeId: shiftTypesTable.id,
-      shiftCode: shiftTypesTable.code,
+      shiftCode: shiftTypesTable.displayCode,
+      fallbackShiftCode: shiftTypesTable.code,
       shiftName: shiftTypesTable.name,
       shiftColor: shiftTypesTable.color,
+      category: shiftTypesTable.category,
+      displayInCalendar: shiftTypesTable.displayInCalendar,
       notes: shiftAssignmentsTable.notes,
     })
     .from(shiftAssignmentsTable)
@@ -110,7 +152,14 @@ async function scheduleAssignments(
       eq(shiftTypesTable.id, shiftAssignmentsTable.shiftTypeId),
     )
     .where(and(...conditions))
-    .orderBy(asc(shiftAssignmentsTable.date), asc(employeesTable.fullName));
+    .orderBy(asc(shiftAssignmentsTable.date), asc(employeesTable.fullName))
+    .then((rows) =>
+      rows.map(({ fallbackShiftCode, ...assignment }) => ({
+        ...assignment,
+        shiftCode: assignment.shiftCode ?? fallbackShiftCode,
+        isWorking: assignment.category === "working",
+      })),
+    );
 }
 
 function schedulePayload(
@@ -123,6 +172,8 @@ function schedulePayload(
     status: version?.status === "draft" ? "draft" : "published",
     versionId: version?.id ?? null,
     versionNumber: version?.versionNumber ?? null,
+    periodStart: version ? periodForVersion(version).start : null,
+    periodEnd: version ? periodForVersion(version).end : null,
     assignments,
   };
 }
@@ -138,9 +189,12 @@ async function assignmentById(versionId: string, assignmentId: string) {
       departmentId: departmentsTable.id,
       departmentName: departmentsTable.name,
       shiftTypeId: shiftTypesTable.id,
-      shiftCode: shiftTypesTable.code,
+      shiftCode: shiftTypesTable.displayCode,
+      fallbackShiftCode: shiftTypesTable.code,
       shiftName: shiftTypesTable.name,
       shiftColor: shiftTypesTable.color,
+      category: shiftTypesTable.category,
+      displayInCalendar: shiftTypesTable.displayInCalendar,
       notes: shiftAssignmentsTable.notes,
     })
     .from(shiftAssignmentsTable)
@@ -163,7 +217,13 @@ async function assignmentById(versionId: string, assignmentId: string) {
       ),
     )
     .limit(1);
-  return assignment;
+  if (!assignment) return assignment;
+  const { fallbackShiftCode, ...result } = assignment;
+  return {
+    ...result,
+    shiftCode: result.shiftCode ?? fallbackShiftCode,
+    isWorking: result.category === "working",
+  };
 }
 
 async function getVersion(versionId: string) {
@@ -186,10 +246,21 @@ async function versionResponse(
   const [assignmentCount] = await db
     .select({ count: count(shiftAssignmentsTable.id) })
     .from(shiftAssignmentsTable)
-    .where(eq(shiftAssignmentsTable.versionId, version.id));
+    .innerJoin(
+      shiftTypesTable,
+      eq(shiftTypesTable.id, shiftAssignmentsTable.shiftTypeId),
+    )
+    .where(
+      and(
+        eq(shiftAssignmentsTable.versionId, version.id),
+        eq(shiftTypesTable.category, "working"),
+      ),
+    );
   return {
     id: version.id,
     month: version.month,
+    periodStart: periodForVersion(version).start,
+    periodEnd: periodForVersion(version).end,
     versionNumber: version.versionNumber,
     status: version.status,
     sourceImportId: version.sourceImportId,
@@ -224,15 +295,7 @@ router.get("/dashboard/summary", async (req, res): Promise<void> => {
     .select({ count: count(departmentsTable.id) })
     .from(departmentsTable)
     .where(eq(departmentsTable.active, true));
-  const [pendingImports] = await db
-    .select({ count: count(importJobsTable.id) })
-    .from(importJobsTable)
-    .where(
-      and(
-        eq(importJobsTable.month, month),
-        inArray(importJobsTable.status, ["needs_review", "ready"]),
-      ),
-    );
+  const monthPeriod = periodForMonth(month);
   const published = (await versionsForMonth(month)).find(
     (version) => version.status === "published",
   );
@@ -240,15 +303,43 @@ router.get("/dashboard/summary", async (req, res): Promise<void> => {
     ? await db
         .select({ count: count(shiftAssignmentsTable.id) })
         .from(shiftAssignmentsTable)
-        .where(eq(shiftAssignmentsTable.versionId, published.id))
+        .innerJoin(
+          shiftTypesTable,
+          eq(shiftTypesTable.id, shiftAssignmentsTable.shiftTypeId),
+        )
+        .where(
+          and(
+            eq(shiftAssignmentsTable.versionId, published.id),
+            gte(shiftAssignmentsTable.date, monthPeriod.start),
+            lte(shiftAssignmentsTable.date, monthPeriod.end),
+            eq(shiftTypesTable.category, "working"),
+          ),
+        )
     : [{ count: 0 }];
+  const pendingJobs = await db
+    .select({
+      month: importJobsTable.month,
+      periodStart: importJobsTable.periodStart,
+      periodEnd: importJobsTable.periodEnd,
+    })
+    .from(importJobsTable)
+    .where(inArray(importJobsTable.status, ["needs_review", "ready"]));
+  const importReviewCount = pendingJobs.filter((job) =>
+    periodsOverlap(
+      monthPeriod,
+      {
+        start: job.periodStart ?? periodForMonth(job.month).start,
+        end: job.periodEnd ?? periodForMonth(job.month).end,
+      },
+    ),
+  ).length;
   res.json(
     GetDashboardSummaryResponse.parse({
       month,
       employeeCount: Number(employeeCount.count),
       departmentCount: Number(departmentCount.count),
       assignedShiftCount: Number(assignments[0]?.count ?? 0),
-      importReviewCount: Number(pendingImports.count),
+      importReviewCount,
       publishedVersion: published?.versionNumber ?? null,
       publishedAt: published?.publishedAt?.toISOString() ?? null,
     }),
@@ -296,7 +387,12 @@ router.get("/schedule/month", async (req, res): Promise<void> => {
   const user = currentAppUser(req);
   const version = await visibleVersion(query.data.month, user.role === "admin");
   const assignments = version
-    ? await scheduleAssignments(version.id, query.data.departmentId)
+    ? await scheduleAssignments(
+        version.id,
+        query.data.departmentId,
+        undefined,
+        query.data.month,
+      )
     : [];
   res.json(
     GetMonthlyScheduleResponse.parse(
@@ -317,7 +413,12 @@ router.get("/schedule/mine", async (req, res): Promise<void> => {
   );
   const assignments =
     version && user.employeeId
-      ? await scheduleAssignments(version.id, undefined, user.employeeId)
+      ? await scheduleAssignments(
+          version.id,
+          undefined,
+          user.employeeId,
+          query.data.month,
+        )
       : [];
   res.json(
     GetMyScheduleResponse.parse(
@@ -352,21 +453,18 @@ router.post(
     }
     const user = currentAppUser(req);
     const result = await db.transaction(async (tx) => {
-      const [latest] = await tx
+      const monthPeriod = periodForMonth(body.data.month);
+      const allVersions = await tx
         .select()
         .from(rosterVersionsTable)
-        .where(
-          and(
-            eq(rosterVersionsTable.month, body.data.month),
-            inArray(rosterVersionsTable.status, ["published", "draft"]),
-          ),
-        )
-        .orderBy(desc(rosterVersionsTable.versionNumber))
-        .limit(1);
-      const [nextNumber] = await tx
-        .select({ max: count(rosterVersionsTable.id) })
-        .from(rosterVersionsTable)
-        .where(eq(rosterVersionsTable.month, body.data.month));
+        .orderBy(desc(rosterVersionsTable.createdAt));
+      const overlapping = allVersions.filter((candidate) =>
+        periodsOverlap(monthPeriod, periodForVersion(candidate)),
+      );
+      const base = overlapping.find(
+        (candidate) => candidate.status === "published",
+      );
+      const newPeriod = base ? periodForVersion(base) : monthPeriod;
       const [maxVersion] = await tx
         .select({ number: rosterVersionsTable.versionNumber })
         .from(rosterVersionsTable)
@@ -378,47 +476,33 @@ router.post(
         .insert(rosterVersionsTable)
         .values({
           month: body.data.month,
+          periodStart: newPeriod.start,
+          periodEnd: newPeriod.end,
           versionNumber,
           status: "draft",
           createdBy: user.id,
         })
         .returning();
-      void nextNumber;
-      if (body.data.copyPublished && latest) {
-        const base =
-          latest.status === "published"
-            ? latest
-            : (
-                await tx
-                  .select()
-                  .from(rosterVersionsTable)
-                  .where(
-                    and(
-                      eq(rosterVersionsTable.month, body.data.month),
-                      eq(rosterVersionsTable.status, "published"),
-                    ),
-                  )
-                  .orderBy(desc(rosterVersionsTable.versionNumber))
-                  .limit(1)
-              )[0];
-        if (base) {
-          const sourceAssignments = await tx
-            .select({
-              employeeId: shiftAssignmentsTable.employeeId,
-              shiftTypeId: shiftAssignmentsTable.shiftTypeId,
-              date: shiftAssignmentsTable.date,
-              notes: shiftAssignmentsTable.notes,
-            })
-            .from(shiftAssignmentsTable)
-            .where(eq(shiftAssignmentsTable.versionId, base.id));
-          if (sourceAssignments.length) {
-            await tx.insert(shiftAssignmentsTable).values(
-              sourceAssignments.map((assignment) => ({
-                ...assignment,
-                versionId: version.id,
-              })),
-            );
-          }
+      if (body.data.copyPublished && base) {
+        const sourceAssignments = await tx
+          .select({
+            employeeId: shiftAssignmentsTable.employeeId,
+            shiftTypeId: shiftAssignmentsTable.shiftTypeId,
+            date: shiftAssignmentsTable.date,
+            sourceEmployeeId: shiftAssignmentsTable.sourceEmployeeId,
+            sourceEmployeeName: shiftAssignmentsTable.sourceEmployeeName,
+            sourceRawShiftValue: shiftAssignmentsTable.sourceRawShiftValue,
+            notes: shiftAssignmentsTable.notes,
+          })
+          .from(shiftAssignmentsTable)
+          .where(eq(shiftAssignmentsTable.versionId, base.id));
+        if (sourceAssignments.length) {
+          await tx.insert(shiftAssignmentsTable).values(
+            sourceAssignments.map((assignment) => ({
+              ...assignment,
+              versionId: version.id,
+            })),
+          );
         }
       }
       await tx.insert(auditLogsTable).values({
@@ -475,15 +559,21 @@ router.post(
         .limit(1);
       if (!draft) return null;
       if (draft.status !== "draft") return "not-draft" as const;
-      await tx
-        .update(rosterVersionsTable)
-        .set({ status: "archived" })
-        .where(
-          and(
-            eq(rosterVersionsTable.month, draft.month),
-            eq(rosterVersionsTable.status, "published"),
-          ),
-        );
+      const publishedVersions = await tx
+        .select()
+        .from(rosterVersionsTable)
+        .where(eq(rosterVersionsTable.status, "published"));
+      const overlappingPublishedIds = publishedVersions
+        .filter((candidate) =>
+          periodsOverlap(periodForVersion(draft), periodForVersion(candidate)),
+        )
+        .map((candidate) => candidate.id);
+      if (overlappingPublishedIds.length) {
+        await tx
+          .update(rosterVersionsTable)
+          .set({ status: "archived" })
+          .where(inArray(rosterVersionsTable.id, overlappingPublishedIds));
+      }
       const [published] = await tx
         .update(rosterVersionsTable)
         .set({
@@ -546,6 +636,8 @@ router.post(
         .insert(rosterVersionsTable)
         .values({
           month: source.month,
+          periodStart: periodForVersion(source).start,
+          periodEnd: periodForVersion(source).end,
           versionNumber: (maxVersion?.number ?? 0) + 1,
           status: "draft",
           sourceImportId: source.sourceImportId,
@@ -557,6 +649,9 @@ router.post(
           employeeId: shiftAssignmentsTable.employeeId,
           shiftTypeId: shiftAssignmentsTable.shiftTypeId,
           date: shiftAssignmentsTable.date,
+          sourceEmployeeId: shiftAssignmentsTable.sourceEmployeeId,
+          sourceEmployeeName: shiftAssignmentsTable.sourceEmployeeName,
+          sourceRawShiftValue: shiftAssignmentsTable.sourceRawShiftValue,
           notes: shiftAssignmentsTable.notes,
         })
         .from(shiftAssignmentsTable)
@@ -608,8 +703,9 @@ router.post(
       });
       return;
     }
-    if (!body.data.date.startsWith(`${draft.version.month}-`)) {
-      res.status(400).json({ error: "Shift date must be within the roster month" });
+    const draftPeriod = periodForVersion(draft.version);
+    if (body.data.date < draftPeriod.start || body.data.date > draftPeriod.end) {
+      res.status(400).json({ error: "Shift date must be within the roster period" });
       return;
     }
     try {
@@ -665,8 +761,12 @@ router.patch(
       });
       return;
     }
-    if (body.data.date && !body.data.date.startsWith(`${draft.version.month}-`)) {
-      res.status(400).json({ error: "Shift date must be within the roster month" });
+    const draftPeriod = periodForVersion(draft.version);
+    if (
+      body.data.date &&
+      (body.data.date < draftPeriod.start || body.data.date > draftPeriod.end)
+    ) {
+      res.status(400).json({ error: "Shift date must be within the roster period" });
       return;
     }
     try {

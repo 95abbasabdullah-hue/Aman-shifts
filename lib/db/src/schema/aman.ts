@@ -90,8 +90,12 @@ export const shiftTypesTable = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     code: text("code").notNull().unique(),
+    category: text("category").notNull().default("working"),
     name: text("name").notNull(),
+    meaning: text("meaning"),
     color: text("color").notNull(),
+    displayCode: text("display_code"),
+    displayInCalendar: boolean("display_in_calendar").notNull().default(true),
     startsAt: text("starts_at"),
     endsAt: text("ends_at"),
     active: boolean("active").notNull().default(true),
@@ -111,8 +115,11 @@ export const importJobsTable = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     month: text("month").notNull(),
+    periodStart: date("period_start", { mode: "string" }),
+    periodEnd: date("period_end", { mode: "string" }),
     status: text("status").notNull().default("needs_review"),
     detectedFormat: text("detected_format").notNull().default("unknown"),
+    selectedWorksheet: text("selected_worksheet"),
     uploadedBy: uuid("uploaded_by")
       .notNull()
       .references(() => appUsersTable.id),
@@ -143,6 +150,8 @@ export const rosterVersionsTable = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     month: text("month").notNull(),
+    periodStart: date("period_start", { mode: "string" }),
+    periodEnd: date("period_end", { mode: "string" }),
     versionNumber: integer("version_number").notNull(),
     status: text("status").notNull().default("draft"),
     sourceImportId: uuid("source_import_id").references(() => importJobsTable.id),
@@ -181,6 +190,9 @@ export const shiftAssignmentsTable = pgTable(
       .notNull()
       .references(() => shiftTypesTable.id),
     date: date("date", { mode: "string" }).notNull(),
+    sourceEmployeeId: text("source_employee_id"),
+    sourceEmployeeName: text("source_employee_name"),
+    sourceRawShiftValue: text("source_raw_shift_value"),
     notes: text("notes"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

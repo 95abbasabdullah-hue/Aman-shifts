@@ -85,6 +85,30 @@ export const appUsersTable = pgTable(
   ],
 );
 
+export const employeeAliasesTable = pgTable(
+  "aman_employee_aliases",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    employeeId: uuid("employee_id")
+      .notNull()
+      .references(() => employeesTable.id, { onDelete: "cascade" }),
+    alias: text("alias").notNull(),
+    normalizedAlias: text("normalized_alias").notNull(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => appUsersTable.id),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("aman_employee_aliases_normalized_unique_idx").on(
+      table.normalizedAlias,
+    ),
+    index("aman_employee_aliases_employee_idx").on(table.employeeId),
+  ],
+);
+
 export const shiftTypesTable = pgTable(
   "aman_shift_types",
   {
@@ -192,6 +216,8 @@ export const shiftAssignmentsTable = pgTable(
     date: date("date", { mode: "string" }).notNull(),
     sourceEmployeeId: text("source_employee_id"),
     sourceEmployeeName: text("source_employee_name"),
+    sourceDepartment: text("source_department"),
+    sourceRole: text("source_role"),
     sourceRawShiftValue: text("source_raw_shift_value"),
     notes: text("notes"),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -251,6 +277,12 @@ export const insertEmployeeSchema = createInsertSchema(employeesTable).omit({
 });
 export type InsertEmployee = z.infer<typeof insertEmployeeSchema>;
 export type Employee = typeof employeesTable.$inferSelect;
+
+export const insertEmployeeAliasSchema = createInsertSchema(
+  employeeAliasesTable,
+).omit({ id: true, createdAt: true });
+export type InsertEmployeeAlias = z.infer<typeof insertEmployeeAliasSchema>;
+export type EmployeeAlias = typeof employeeAliasesTable.$inferSelect;
 
 export const insertAppUserSchema = createInsertSchema(appUsersTable).omit({
   id: true,

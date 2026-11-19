@@ -881,13 +881,20 @@ export async function parseRosterWorkbook(
     }
 
     const isDepartmentLabel = matchDepartment(sourceEmployeeName, departments);
-    const hasAnyShiftValue = selectedCandidate.dateColumns.some(({ column }) =>
-      rawCellText(row.getCell(column).value).trim(),
-    );
+    const employeeByNameMatch = sourceEmployeeName.trim()
+      ? employeeByName.get(normalize(sourceEmployeeName.trim()))
+      : undefined;
+    const recognizedShiftCount = selectedCandidate.dateColumns.filter(({ column }) => {
+      const rawShiftValue = rawCellText(row.getCell(column).value);
+      if (!rawShiftValue.trim()) return false;
+      const shiftCode = normalizeShiftValue(rawShiftValue);
+      return shiftByCode.has(normalize(shiftCode));
+    }).length;
+    const hasRosterValues = recognizedShiftCount >= 2;
     const isEmployeeRow = Boolean(
       (sourceEmployeeId || sourceEmployeeName) &&
         !isDepartmentLabel &&
-        (sourceEmployeeId || roleValue || hasAnyShiftValue),
+        (sourceEmployeeId || roleValue || employeeByNameMatch || hasRosterValues),
     );
     if (!isEmployeeRow) continue;
 
@@ -895,7 +902,6 @@ export async function parseRosterWorkbook(
     const employeeById = sourceEmployeeId
       ? employeeByCode.get(normalize(sourceEmployeeId))
       : undefined;
-    const employeeByNameMatch = name ? employeeByName.get(normalize(name)) : undefined;
     const employee = sourceEmployeeId ? employeeById : employeeByNameMatch;
     const departmentId = employee?.departmentId ?? currentDepartmentId ?? null;
     const sourceDepartment =

@@ -150,11 +150,15 @@ const actualWorkbookPath = process.env.AMAN_ROSTER_WORKBOOK;
 function rawExcelText(value: ExcelJS.CellValue): string {
   if (value == null) return "";
   if (value instanceof Date) return dateString(value);
-  if (typeof value === "string" || typeof value === "number") return String(value);
-  if ("result" in value) return rawExcelText(value.result as ExcelJS.CellValue);
-  if ("text" in value && typeof value.text === "string") return value.text;
-  if ("richText" in value && Array.isArray(value.richText)) {
-    return value.richText.map((part) => part.text).join("");
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (typeof value === "object") {
+    if ("result" in value) return rawExcelText(value.result as ExcelJS.CellValue);
+    if ("text" in value && typeof value.text === "string") return value.text;
+    if ("richText" in value && Array.isArray(value.richText)) {
+      return value.richText.map((part) => part.text).join("");
+    }
   }
   return "";
 }
@@ -170,6 +174,23 @@ test("official shift normalization trims aliases and keeps D1 separate", () => {
   assert.equal(normalizeShiftValue(""), "BLANK");
   assert.equal(normalizeShiftValue(" / "), "/");
   assert.equal(normalizeShiftValue(" OFF "), "OFF");
+  assert.deepEqual(
+    DEFAULT_SHIFT_DEFINITIONS.filter((shift) => shift.category === "working").map(
+      ({ code, displayCode, color, startsAt, endsAt }) => ({
+        code,
+        displayCode,
+        color,
+        startsAt,
+        endsAt,
+      }),
+    ),
+    [
+      { code: "D", displayCode: "D", color: "#1976D2", startsAt: "07:00", endsAt: "19:00" },
+      { code: "N", displayCode: "N", color: "#7555C7", startsAt: "19:00", endsAt: "07:00" },
+      { code: "M", displayCode: "M", color: "#43A047", startsAt: null, endsAt: null },
+      { code: "D1", displayCode: "D1", color: "#EF8F25", startsAt: null, endsAt: null },
+    ],
+  );
 });
 
 test("raw Excel text is retained while surrounding spaces are normalized", async () => {
@@ -380,7 +401,10 @@ test(
   { skip: !actualWorkbookPath },
   async () => {
     const sourceWorkbook = new ExcelJS.Workbook();
-    await sourceWorkbook.xlsx.load(await readFile(actualWorkbookPath!));
+    const sourceBuffer = await readFile(actualWorkbookPath!);
+    await sourceWorkbook.xlsx.load(
+      sourceBuffer as unknown as Parameters<typeof sourceWorkbook.xlsx.load>[0],
+    );
     const sourceSheet = sourceWorkbook.getWorksheet("ED-ICU");
     assert.ok(sourceSheet, "ED-ICU worksheet must exist");
 
@@ -421,7 +445,11 @@ test(
     assert.equal(parsed.periodEnd, "2026-12-19");
     assert.equal(sourceRows.length, 20);
     assert.equal(sourceDates.length, 30);
-    assert.equal(parsed.records.length, 600);
+    assert.equal(
+      parsed.records.length,
+      600,
+      `parsed source rows: ${[...new Set(parsed.records.map((record) => record.rowNumber))].join(",")}; mapping: ${JSON.stringify(parsed.mapping)}`,
+    );
     assert.equal(new Set(parsed.records.map((record) => record.rowNumber)).size, 20);
     assert.equal(new Set(parsed.records.map((record) => record.date)).size, 30);
 

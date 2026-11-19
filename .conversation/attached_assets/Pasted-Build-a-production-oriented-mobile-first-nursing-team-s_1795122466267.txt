@@ -1,0 +1,46 @@
+Build a production-oriented, mobile-first nursing team shift scheduling web application called "Aman Team Shifts".
+
+GOAL:
+Create a responsive PWA inspired by the attached Team Shifts screenshot. Admins upload a monthly Excel duty roster and the app automatically parses it into an interactive calendar for all nursing staff. This is a roster importer, NOT an automatic shift-generation algorithm.
+
+STACK:
+Next.js, TypeScript, Tailwind CSS, PostgreSQL, Clerk authentication, ExcelJS for server-side Excel parsing.
+
+ROLES:
+Admin: Manage departments, employees, shift codes, upload rosters, preview imports, publish and manually edit shifts.
+Staff: View the published team calendar and their own schedule. No editing privileges.
+
+INTERFACE:
+- Mobile-first premium clean design.
+- Top navigation with month and week/day selectors.
+- Daily staff list grouped by department, visually matching the screenshot.
+- Each employee card shows profile photo, name, shift code and configurable color.
+- Monthly personal schedule, department filters and staff search.
+- English interface initially. Prepare for Arabic RTL support.
+- Timezone Asia/Qatar, calendar week starting Sunday.
+
+EXCEL IMPORT:
+- Accept .xlsx files (and .xls only if reliably supported).
+- Detect worksheet and date columns, or allow admin mapping.
+- Support wide monthly matrix format (employees in rows, dates in columns) and long format (employee/date/shift rows).
+- Match employees by stable Employee ID, with manual resolution of name mismatches.
+- Support configurable codes such as D, N, OFF, OT 1, Dx, AL and others. Never guess code meanings.
+- Correctly parse Excel serial dates, merged cells and empty cells.
+- Show preview, unknown codes, duplicates, unmatched employees and invalid dates before import.
+- Admin confirms whether to replace a month or merge selected records.
+- Use database transactions, idempotent imports, roster version history and rollback.
+- Publish only after admin approval; no partially imported data should be visible.
+
+DATA:
+Employees, Departments, ShiftTypes, ShiftAssignments, RosterVersions, ImportJobs, Users, AuditLogs.
+Use server-side role-based authorization on every protected endpoint.
+
+SECURITY:
+Authenticated access only, least-privilege roles, private employee photos, secure file validation, upload size limits, audit logging, and no real employee data in public demo.
+Ensure privacy and data residency requirements can be met before production use.
+
+QUALITY:
+Create a working end-to-end MVP with realistic fictional data.
+Test Excel import, all month transitions, duplicates, unauthorized access, mobile responsiveness, timezone correctness and republishing.
+Provide a sample Excel template and clear admin instructions.
+Do not implement chat, payroll, automatic shift allocation or native Android builds in phase 1.

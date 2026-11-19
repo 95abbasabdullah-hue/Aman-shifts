@@ -1,0 +1,854 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: Aman Team Shifts API. All protected operations require a valid Clerk session and enforce application roles on the server.
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: account
+    description: Signed-in user profile
+  - name: dashboard
+    description: Roster summaries and activity
+  - name: departments
+    description: Nursing departments
+  - name: employees
+    description: Staff directory
+  - name: shifts
+    description: Shift types and schedules
+  - name: imports
+    description: Excel roster preview and import
+  - name: versions
+    description: Published roster history and rollback
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  /me:
+    get:
+      operationId: getCurrentUser
+      tags: [account]
+      summary: Get the signed-in app user
+      responses:
+        "200":
+          description: Current user and app role
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUser"
+  /dashboard/summary:
+    get:
+      operationId: getDashboardSummary
+      tags: [dashboard]
+      summary: Get roster counts for a month
+      parameters:
+        - name: month
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: "^\\d{4}-\\d{2}$"
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSummary"
+  /activity/recent:
+    get:
+      operationId: getRecentActivity
+      tags: [dashboard]
+      summary: Get recent roster changes
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+      responses:
+        "200":
+          description: Recent activity visible to administrators
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityItem"
+  /departments:
+    get:
+      operationId: listDepartments
+      tags: [departments]
+      summary: List departments available to the signed-in user
+      responses:
+        "200":
+          description: Departments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Department"
+    post:
+      operationId: createDepartment
+      tags: [departments]
+      summary: Create a department
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DepartmentInput"
+      responses:
+        "201":
+          description: Created department
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Department"
+  /departments/{departmentId}:
+    patch:
+      operationId: updateDepartment
+      tags: [departments]
+      summary: Update a department
+      parameters:
+        - name: departmentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DepartmentUpdate"
+      responses:
+        "200":
+          description: Updated department
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Department"
+  /employees:
+    get:
+      operationId: listEmployees
+      tags: [employees]
+      summary: Search the staff directory
+      parameters:
+        - name: departmentId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: activeOnly
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: true
+      responses:
+        "200":
+          description: Employees
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Employee"
+    post:
+      operationId: createEmployee
+      tags: [employees]
+      summary: Add an employee
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmployeeInput"
+      responses:
+        "201":
+          description: Created employee
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Employee"
+  /employees/{employeeId}:
+    patch:
+      operationId: updateEmployee
+      tags: [employees]
+      summary: Update employee details or status
+      parameters:
+        - name: employeeId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmployeeUpdate"
+      responses:
+        "200":
+          description: Updated employee
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Employee"
+  /shift-types:
+    get:
+      operationId: listShiftTypes
+      tags: [shifts]
+      summary: List configured shift types
+      responses:
+        "200":
+          description: Shift types
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ShiftType"
+    post:
+      operationId: createShiftType
+      tags: [shifts]
+      summary: Create a shift type
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShiftTypeInput"
+      responses:
+        "201":
+          description: Created shift type
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShiftType"
+  /shift-types/{shiftTypeId}:
+    patch:
+      operationId: updateShiftType
+      tags: [shifts]
+      summary: Update a shift type
+      parameters:
+        - name: shiftTypeId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShiftTypeUpdate"
+      responses:
+        "200":
+          description: Updated shift type
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShiftType"
+  /schedule/month:
+    get:
+      operationId: getMonthlySchedule
+      tags: [shifts]
+      summary: Get the schedule visible to the signed-in user
+      parameters:
+        - name: month
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: "^\\d{4}-\\d{2}$"
+        - name: departmentId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Published team schedule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleResponse"
+  /schedule/mine:
+    get:
+      operationId: getMySchedule
+      tags: [shifts]
+      summary: Get the signed-in employee's schedule
+      parameters:
+        - name: month
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: "^\\d{4}-\\d{2}$"
+      responses:
+        "200":
+          description: Personal schedule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleResponse"
+  /roster-imports:
+    get:
+      operationId: listRosterImports
+      tags: [imports]
+      summary: List recent import jobs
+      responses:
+        "200":
+          description: Recent imports
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RosterImport"
+  /roster-imports/preview:
+    post:
+      operationId: previewRosterImport
+      tags: [imports]
+      summary: Upload and validate a roster workbook
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/RosterImportPreviewInput"
+      responses:
+        "201":
+          description: Preview and validation issues
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportPreview"
+  /roster-imports/{importId}/resolve:
+    post:
+      operationId: resolveRosterImport
+      tags: [imports]
+      summary: Map unmatched employees and shift codes
+      parameters:
+        - name: importId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportResolutionInput"
+      responses:
+        "200":
+          description: Updated import preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportPreview"
+  /roster-imports/{importId}/confirm:
+    post:
+      operationId: confirmRosterImport
+      tags: [imports]
+      summary: Apply a validated import as a new roster version
+      parameters:
+        - name: importId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfirmRosterImportInput"
+      responses:
+        "201":
+          description: Created roster version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RosterVersion"
+  /roster-versions:
+    get:
+      operationId: listRosterVersions
+      tags: [versions]
+      summary: List roster versions for a month
+      parameters:
+        - name: month
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: "^\\d{4}-\\d{2}$"
+      responses:
+        "200":
+          description: Roster versions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RosterVersion"
+    post:
+      operationId: createRosterVersion
+      tags: [versions]
+      summary: Create a draft roster for manual editing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRosterVersionInput"
+      responses:
+        "201":
+          description: Created draft roster version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RosterVersion"
+  /roster-versions/{versionId}/schedule:
+    get:
+      operationId: getRosterVersionSchedule
+      tags: [versions]
+      summary: Get assignments from a specific roster version
+      parameters:
+        - name: versionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Roster version schedule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleResponse"
+  /roster-versions/{versionId}/publish:
+    post:
+      operationId: publishRosterVersion
+      tags: [versions]
+      summary: Publish a draft roster version to staff
+      parameters:
+        - name: versionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Published roster version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RosterVersion"
+  /roster-versions/{versionId}/rollback:
+    post:
+      operationId: rollbackRosterVersion
+      tags: [versions]
+      summary: Restore a previous roster version
+      parameters:
+        - name: versionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RollbackRosterInput"
+      responses:
+        "201":
+          description: New version restored from history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RosterVersion"
+  /roster-versions/{versionId}/assignments:
+    post:
+      operationId: createRosterAssignment
+      tags: [versions]
+      summary: Add a shift to a draft roster
+      parameters:
+        - name: versionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssignmentInput"
+      responses:
+        "201":
+          description: Created assignment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShiftAssignment"
+  /roster-versions/{versionId}/assignments/{assignmentId}:
+    patch:
+      operationId: updateRosterAssignment
+      tags: [versions]
+      summary: Edit a shift in a draft roster
+      parameters:
+        - name: versionId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssignmentUpdate"
+      responses:
+        "200":
+          description: Updated assignment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShiftAssignment"
+    delete:
+      operationId: deleteRosterAssignment
+      tags: [versions]
+      summary: Remove a shift from a draft roster
+      parameters:
+        - name: versionId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Assignment removed
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+    CurrentUser:
+      type: object
+      properties:
+        id: { type: string }
+        clerkUserId: { type: string }
+        email: { type: string }
+        fullName: { type: string }
+        role: { type: string, enum: [admin, staff] }
+        departmentId: { type: ["string", "null"] }
+      required: [id, clerkUserId, email, fullName, role, departmentId]
+    DashboardSummary:
+      type: object
+      properties:
+        month: { type: string }
+        employeeCount: { type: integer }
+        departmentCount: { type: integer }
+        assignedShiftCount: { type: integer }
+        importReviewCount: { type: integer }
+        publishedVersion: { type: ["integer", "null"] }
+        publishedAt: { type: ["string", "null"], format: date-time }
+      required: [month, employeeCount, departmentCount, assignedShiftCount, importReviewCount, publishedVersion, publishedAt]
+    ActivityItem:
+      type: object
+      properties:
+        id: { type: string }
+        action: { type: string }
+        actorName: { type: string }
+        subject: { type: string }
+        createdAt: { type: string, format: date-time }
+      required: [id, action, actorName, subject, createdAt]
+    Department:
+      type: object
+      properties:
+        id: { type: string }
+        code: { type: string }
+        name: { type: string }
+        timezone: { type: string }
+        employeeCount: { type: integer }
+      required: [id, code, name, timezone, employeeCount]
+    DepartmentInput:
+      type: object
+      properties:
+        code: { type: string, minLength: 1, maxLength: 20 }
+        name: { type: string, minLength: 1, maxLength: 100 }
+        timezone: { type: string, default: Asia/Qatar }
+      required: [code, name]
+    DepartmentUpdate:
+      type: object
+      properties:
+        code: { type: string, minLength: 1, maxLength: 20 }
+        name: { type: string, minLength: 1, maxLength: 100 }
+        timezone: { type: string }
+    Employee:
+      type: object
+      properties:
+        id: { type: string }
+        employeeCode: { type: string }
+        fullName: { type: string }
+        jobTitle: { type: string }
+        departmentId: { type: string }
+        departmentName: { type: string }
+        email: { type: ["string", "null"], format: email }
+        photoPath: { type: ["string", "null"] }
+        active: { type: boolean }
+      required: [id, employeeCode, fullName, jobTitle, departmentId, departmentName, email, photoPath, active]
+    EmployeeInput:
+      type: object
+      properties:
+        employeeCode: { type: string, minLength: 1, maxLength: 40 }
+        fullName: { type: string, minLength: 1, maxLength: 140 }
+        jobTitle: { type: string, minLength: 1, maxLength: 100 }
+        departmentId: { type: string }
+        email: { type: ["string", "null"], format: email }
+        photoPath: { type: ["string", "null"] }
+      required: [employeeCode, fullName, jobTitle, departmentId]
+    EmployeeUpdate:
+      type: object
+      properties:
+        employeeCode: { type: string, minLength: 1, maxLength: 40 }
+        fullName: { type: string, minLength: 1, maxLength: 140 }
+        jobTitle: { type: string, minLength: 1, maxLength: 100 }
+        departmentId: { type: string }
+        email: { type: ["string", "null"], format: email }
+        photoPath: { type: ["string", "null"] }
+        active: { type: boolean }
+    ShiftType:
+      type: object
+      properties:
+        id: { type: string }
+        code: { type: string }
+        name: { type: string }
+        color: { type: string, pattern: "^#[0-9A-Fa-f]{6}$" }
+        startsAt: { type: ["string", "null"], pattern: "^\\d{2}:\\d{2}$" }
+        endsAt: { type: ["string", "null"], pattern: "^\\d{2}:\\d{2}$" }
+        active: { type: boolean }
+      required: [id, code, name, color, startsAt, endsAt, active]
+    ShiftTypeInput:
+      type: object
+      properties:
+        code: { type: string, minLength: 1, maxLength: 20 }
+        name: { type: string, minLength: 1, maxLength: 100 }
+        color: { type: string, pattern: "^#[0-9A-Fa-f]{6}$" }
+        startsAt: { type: ["string", "null"], pattern: "^\\d{2}:\\d{2}$" }
+        endsAt: { type: ["string", "null"], pattern: "^\\d{2}:\\d{2}$" }
+      required: [code, name, color]
+    ShiftTypeUpdate:
+      type: object
+      properties:
+        code: { type: string, minLength: 1, maxLength: 20 }
+        name: { type: string, minLength: 1, maxLength: 100 }
+        color: { type: string, pattern: "^#[0-9A-Fa-f]{6}$" }
+        startsAt: { type: ["string", "null"], pattern: "^\\d{2}:\\d{2}$" }
+        endsAt: { type: ["string", "null"], pattern: "^\\d{2}:\\d{2}$" }
+        active: { type: boolean }
+    ShiftAssignment:
+      type: object
+      properties:
+        id: { type: string }
+        date: { type: string, format: date }
+        employeeId: { type: string }
+        employeeCode: { type: string }
+        employeeName: { type: string }
+        departmentId: { type: string }
+        departmentName: { type: string }
+        shiftTypeId: { type: string }
+        shiftCode: { type: string }
+        shiftName: { type: string }
+        shiftColor: { type: string }
+        notes: { type: ["string", "null"] }
+      required: [id, date, employeeId, employeeCode, employeeName, departmentId, departmentName, shiftTypeId, shiftCode, shiftName, shiftColor, notes]
+    ScheduleResponse:
+      type: object
+      properties:
+        month: { type: string }
+        status: { type: string, enum: [draft, published] }
+        versionId: { type: ["string", "null"] }
+        versionNumber: { type: ["integer", "null"] }
+        assignments:
+          type: array
+          items: { $ref: "#/components/schemas/ShiftAssignment" }
+      required: [month, status, versionId, versionNumber, assignments]
+    RosterImport:
+      type: object
+      properties:
+        id: { type: string }
+        month: { type: string }
+        status: { type: string, enum: [needs_review, ready, committed, rejected] }
+        uploadedByName: { type: string }
+        uploadedAt: { type: string, format: date-time }
+        detectedFormat: { type: string, enum: [wide, long, unknown] }
+        rowCount: { type: integer }
+        validCount: { type: integer }
+        issueCount: { type: integer }
+        createdVersionId: { type: ["string", "null"] }
+      required: [id, month, status, uploadedByName, uploadedAt, detectedFormat, rowCount, validCount, issueCount, createdVersionId]
+    ImportIssue:
+      type: object
+      properties:
+        code: { type: string, enum: [unknown_employee, unknown_shift, duplicate, invalid_date, missing_value, unsupported_sheet] }
+        message: { type: string }
+        rowNumber: { type: ["integer", "null"] }
+        value: { type: ["string", "null"] }
+      required: [code, message, rowNumber, value]
+    ImportMapping:
+      type: object
+      properties:
+        format: { type: string, enum: [auto, wide, long] }
+        employeeIdColumn: { type: ["string", "null"] }
+        employeeNameColumn: { type: ["string", "null"] }
+        departmentColumn: { type: ["string", "null"] }
+        dateColumn: { type: ["string", "null"] }
+        shiftCodeColumn: { type: ["string", "null"] }
+      required: [format, employeeIdColumn, employeeNameColumn, departmentColumn, dateColumn, shiftCodeColumn]
+    StagedAssignment:
+      type: object
+      properties:
+        rowNumber: { type: integer }
+        date: { type: ["string", "null"], format: date }
+        employeeId: { type: ["string", "null"] }
+        employeeCode: { type: ["string", "null"] }
+        employeeName: { type: string }
+        departmentId: { type: ["string", "null"] }
+        shiftTypeId: { type: ["string", "null"] }
+        shiftCode: { type: string }
+        shiftName: { type: ["string", "null"] }
+        valid: { type: boolean }
+      required: [rowNumber, date, employeeId, employeeCode, employeeName, departmentId, shiftTypeId, shiftCode, shiftName, valid]
+    ImportPreview:
+      type: object
+      properties:
+        import: { $ref: "#/components/schemas/RosterImport" }
+        columns:
+          type: array
+          items: { type: string }
+        mapping: { $ref: "#/components/schemas/ImportMapping" }
+        records:
+          type: array
+          items: { $ref: "#/components/schemas/StagedAssignment" }
+        issues:
+          type: array
+          items: { $ref: "#/components/schemas/ImportIssue" }
+      required: [import, columns, mapping, records, issues]
+    RosterImportPreviewInput:
+      type: object
+      properties:
+        file: { type: string, format: binary }
+        month: { type: string, pattern: "^\\d{4}-\\d{2}$" }
+        mappingJson: { type: string, maxLength: 10000 }
+      required: [file, month]
+    EmployeeResolution:
+      type: object
+      properties:
+        rowNumber: { type: integer, minimum: 1 }
+        employeeId: { type: string }
+      required: [rowNumber, employeeId]
+    ShiftCodeResolution:
+      type: object
+      properties:
+        shiftCode: { type: string }
+        shiftTypeId: { type: string }
+      required: [shiftCode, shiftTypeId]
+    ImportResolutionInput:
+      type: object
+      properties:
+        employees:
+          type: array
+          items: { $ref: "#/components/schemas/EmployeeResolution" }
+        shiftCodes:
+          type: array
+          items: { $ref: "#/components/schemas/ShiftCodeResolution" }
+      required: [employees, shiftCodes]
+    ConfirmRosterImportInput:
+      type: object
+      properties:
+        mode: { type: string, enum: [replace, merge] }
+        publish: { type: boolean, default: false }
+      required: [mode, publish]
+    RosterVersion:
+      type: object
+      properties:
+        id: { type: string }
+        month: { type: string }
+        versionNumber: { type: integer }
+        status: { type: string, enum: [draft, published, archived] }
+        sourceImportId: { type: ["string", "null"] }
+        createdByName: { type: string }
+        createdAt: { type: string, format: date-time }
+        publishedAt: { type: ["string", "null"], format: date-time }
+        assignmentCount: { type: integer }
+      required: [id, month, versionNumber, status, sourceImportId, createdByName, createdAt, publishedAt, assignmentCount]
+    CreateRosterVersionInput:
+      type: object
+      properties:
+        month: { type: string, pattern: "^\\d{4}-\\d{2}$" }
+        copyPublished: { type: boolean, default: true }
+      required: [month, copyPublished]
+    RollbackRosterInput:
+      type: object
+      properties:
+        reason: { type: string, minLength: 3, maxLength: 500 }
+      required: [reason]
+    AssignmentInput:
+      type: object
+      properties:
+        date: { type: string, format: date }
+        employeeId: { type: string }
+        shiftTypeId: { type: string }
+        notes: { type: ["string", "null"] }
+      required: [date, employeeId, shiftTypeId]
+    AssignmentUpdate:
+      type: object
+      properties:
+        date: { type: string, format: date }
+        employeeId: { type: string }
+        shiftTypeId: { type: string }
+        notes: { type: ["string", "null"] }
+

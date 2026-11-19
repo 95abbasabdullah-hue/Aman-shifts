@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Aman Team Shifts"
+description = "A mobile-first nursing roster PWA for admins to import, validate, publish, and revise monthly Excel schedules, and for staff to view their team's and personal shifts."
+version = "1.0.0"
+id = "artifacts/aman-team-shifts"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 20218
+
+[services.development]
+run = "pnpm --filter @workspace/aman-team-shifts run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/aman-team-shifts", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/aman-team-shifts/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "20218"
+BASE_PATH = "/"

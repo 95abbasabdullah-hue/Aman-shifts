@@ -1,0 +1,1 @@
+- [Aman roster constraints](aman-roster-constraints.md) — Use Asia/Qatar time, Sunday-first weeks, English-first RTL-ready UI, and fictional demo roster data only.

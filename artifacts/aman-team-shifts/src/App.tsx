@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
-import { ClerkProvider, Show, SignIn, SignUp, useClerk } from '@clerk/react';
+import { ClerkProvider, Show, SignIn, SignUp, useAuth, useClerk } from '@clerk/react';
 import { publishableKeyFromHost } from '@clerk/react/internal';
 import { shadcn } from '@clerk/themes';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
@@ -24,6 +24,7 @@ import {
   usePreviewRosterImport, useResolveRosterImport, useConfirmRosterImport,
   usePublishRosterVersion, useRollbackRosterVersion,
   useLinkCurrentUserEmployee, useUpdateDepartment, useUpdateEmployee, useUpdateRosterAssignment, useUpdateShiftType,
+  setAuthTokenGetter, setBaseUrl,
   type ActivityItem, type AutomaticRosterImportResult, type Department, type Employee,
   type ImportMapping, type ImportPreview,
   type RosterVersion, type ShiftAssignment, type ShiftType,
@@ -35,8 +36,18 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
 const queryClient = new QueryClient();
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
+const configuredApiOrigin = import.meta.env.VITE_API_ORIGIN?.trim();
+const parsedApiOrigin = configuredApiOrigin ? new URL(configuredApiOrigin) : null;
+if (parsedApiOrigin && (parsedApiOrigin.pathname !== '/' || parsedApiOrigin.search || parsedApiOrigin.hash)) {
+  throw new Error('VITE_API_ORIGIN must be an origin without a path, query, or fragment.');
+}
+const apiOrigin = parsedApiOrigin?.origin ?? null;
+if (apiOrigin && import.meta.env.PROD && !apiOrigin.startsWith('https://')) {
+  throw new Error('VITE_API_ORIGIN must use HTTPS in production.');
+}
+setBaseUrl(apiOrigin);
 const clerkPubKey = publishableKeyFromHost(window.location.hostname, import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
-const clerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL;
+const clerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL || (apiOrigin ? `${apiOrigin}/api/__clerk` : undefined);
 const monthNow = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Qatar', year: 'numeric', month: '2-digit' }).format(new Date()).slice(0, 7);
 const dateQatar = (date: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Qatar', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
 const fmtDate = (date: string, options: Intl.DateTimeFormatOptions = { weekday: 'long', day: 'numeric', month: 'long' }) =>
@@ -402,13 +413,32 @@ function SchedulePage({mine=false}:{mine?:boolean}) {
   const [showAllStatuses,setShowAllStatuses]=useState(true);
   const {data:departments=[]}=useListDepartments();
   const scheduleParams={month,...(departmentId?{departmentId}:{})};
-  const teamQuery=useGetMonthlySchedule(scheduleParams,{query:{enabled:!mine,queryKey:getGetMonthlyScheduleQueryKey(scheduleParams)}});
-  const mineQuery=useGetMySchedule({month},{query:{enabled:mine,queryKey:getGetMyScheduleQueryKey({month})}});
+  const refreshOptions={
+    refetchInterval:45_000,
+    refetchIntervalInBackground:false,
+    refetchOnMount:'always' as const,
+    refetchOnWindowFocus:true,
+    refetchOnReconnect:true,
+    staleTime:0,
+  };
+  const teamQuery=useGetMonthlySchedule(scheduleParams,{query:{...refreshOptions,enabled:!mine,queryKey:getGetMonthlyScheduleQueryKey(scheduleParams)}});
+  const mineQuery=useGetMySchedule({month},{query:{...refreshOptions,enabled:mine,queryKey:getGetMyScheduleQueryKey({month})}});
   const schedule=mine?mineQuery.data:teamQuery.data;
   const isLoading=mine?mineQuery.isLoading:teamQuery.isLoading;
   const isError=mine?mineQuery.isError:teamQuery.isError;
   const scheduleError=mine?mineQuery.error:teamQuery.error;
   const refetch=mine?mineQuery.refetch:teamQuery.refetch;
+  const scheduleQuery=mine?mineQuery:teamQuery;
+  const lastSyncLabel=scheduleQuery.dataUpdatedAt
+    ? new Intl.DateTimeFormat('en',{day:'numeric',month:'short',hour:'numeric',minute:'2-digit',timeZone:'Asia/Qatar'}).format(new Date(scheduleQuery.dataUpdatedAt))
+    : 'not available';
+  const [isOnline,setIsOnline]=useState(()=>navigator.onLine);
+  useEffect(()=>{
+    const updateOnline=()=>setIsOnline(navigator.onLine);
+    window.addEventListener('online',updateOnline);
+    window.addEventListener('offline',updateOnline);
+    return ()=>{window.removeEventListener('online',updateOnline);window.removeEventListener('offline',updateOnline);};
+  },[]);
   const {data:user}=useGetCurrentUser();
   const [editAssignment,setEditAssignment]=useState<ShiftAssignment|null|false>(false);
    const rows=mine
@@ -445,7 +475,16 @@ function SchedulePage({mine=false}:{mine?:boolean}) {
         </div>}
        {admin && !mine && <button className="button button-primary" disabled={!schedule?.versionId} onClick={()=>setEditAssignment(null)} data-testid="button-add-assignment"><Plus size={16}/> Add shift</button>}
     </div>
-     {isLoading?<SpinnerBlock/>:isError||!schedule?<QueryError message={scheduleErrorMessage(scheduleError)} retry={()=>refetch()}/>:!schedule.versionId&&schedule.assignments.length===0?
+    <div className={`schedule-sync-status ${!isOnline?'offline':''}`} role="status" data-testid="schedule-sync-status">
+      <i aria-hidden="true"/>
+      <span>{!isOnline
+        ? `Offline · roster hidden · last successful sync ${lastSyncLabel}`
+        : scheduleQuery.dataUpdatedAt
+          ? `Last synced ${lastSyncLabel} · Qatar time`
+          : 'Waiting for the first schedule sync'}</span>
+      {isOnline&&scheduleQuery.isRefetchError&&<strong>Refresh failed</strong>}
+    </div>
+     {!isOnline?<EmptyState title="You’re offline" detail="Connect to the internet to load the latest schedule. Roster data is hidden while offline."/>:isLoading?<SpinnerBlock/>:isError||!schedule?<QueryError message={scheduleErrorMessage(scheduleError)} retry={()=>refetch()}/>:!schedule.versionId&&schedule.assignments.length===0?
        <EmptyState title="No published schedule available for this period." detail="Your scheduling team has not published a roster for this month yet."/>:<>
        {!mine&&<div className="calendar-strip"><div className="calendar-strip-head">{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=><span key={d}>{d}</span>)}</div>
          <div className="calendar-date-grid">{Array.from({length:leadingCells},(_,i)=><span className="calendar-leading-cell" aria-hidden="true" key={`blank-${i}`}/>)}{dates.map(d=>{const count=schedule.assignments.filter(a=>a.date===d&&a.isWorking).length;const chosen=d===selectedDate;
@@ -941,7 +980,7 @@ function AuthSwitch() {
     signUpForceRedirectUrl={`${basePath}/select-name`}
     localization={{signIn:{start:{title:'Welcome back',subtitle:'Sign in to check your Aman roster'}},signUp:{start:{title:'Join your team',subtitle:'Create your Aman Nursing account'}}}}
     routerPush={to=>setLocation(stripBase(to))} routerReplace={to=>setLocation(stripBase(to),{replace:true})}>
-    <QueryClientProvider client={queryClient}><CacheOnUserChange/><HealthMonitor/><Switch>
+    <QueryClientProvider client={queryClient}><ApiAuthTokenBridge/><ScheduleRefreshMonitor/><CacheOnUserChange/><HealthMonitor/><Switch>
       <Route path="/"><><Show when="signed-in"><Redirect to="/dashboard"/></Show><Show when="signed-out"><PublicHome/></Show></></Route>
       <Route path="/sign-in/*?" component={SignInRoute}/>
       <Route path="/sign-up/*?" component={SignUpRoute}/>
@@ -958,6 +997,35 @@ function AuthSwitch() {
       <Route component={NotFound}/>
     </Switch></QueryClientProvider>
   </ClerkProvider>;
+}
+
+function ApiAuthTokenBridge() {
+  const { getToken, isLoaded } = useAuth();
+  useEffect(() => {
+    setAuthTokenGetter(() => isLoaded ? getToken() : null);
+    return () => setAuthTokenGetter(null);
+  }, [getToken, isLoaded]);
+  return null;
+}
+
+function ScheduleRefreshMonitor() {
+  const client = useQueryClient();
+  useEffect(() => {
+    const refreshSchedules = () => {
+      if (!navigator.onLine || document.visibilityState !== 'visible') return;
+      void client.invalidateQueries({ queryKey: getGetMonthlyScheduleQueryKey() });
+      void client.invalidateQueries({ queryKey: getGetMyScheduleQueryKey() });
+    };
+    document.addEventListener('visibilitychange', refreshSchedules);
+    window.addEventListener('focus', refreshSchedules);
+    window.addEventListener('online', refreshSchedules);
+    return () => {
+      document.removeEventListener('visibilitychange', refreshSchedules);
+      window.removeEventListener('focus', refreshSchedules);
+      window.removeEventListener('online', refreshSchedules);
+    };
+  }, [client]);
+  return null;
 }
 
 function CacheOnUserChange() {

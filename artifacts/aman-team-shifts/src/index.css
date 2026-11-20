@@ -579,6 +579,11 @@ a { color: inherit; text-decoration: none; }
 /* Schedule view */
 .schedule-controls { display:flex; align-items:center; gap:15px; margin-bottom:15px; }
 .schedule-month-name { display:grid; gap:4px; margin-right:auto; }.schedule-month-name>span:first-child { color:#344b53; font:700 17px var(--app-font-serif); }.schedule-timezone { color:#899592; font-size:9px; }
+.schedule-sync-status { display:flex; align-items:center; gap:8px; min-height:30px; margin:-4px 0 14px; padding:7px 10px; border-radius:8px; background:#f0f4ef; color:#586c65; font-size:10px; }
+.schedule-sync-status>i { width:8px; height:8px; flex:none; border-radius:50%; background:#438b61; }
+.schedule-sync-status.offline { background:#fff1e8; color:#8a4d28; }
+.schedule-sync-status.offline>i { background:#c56e36; }
+.schedule-sync-status strong { margin-left:auto; color:#a34b3f; font-size:9px; }
 .filter-select { display:flex; align-items:center; gap:6px; padding:0 10px; height:38px; border:1px solid #dfe5df; border-radius:9px; background:#fffefa; color:#778683; }
 .filter-select select { min-width:120px; appearance:none; border:0; outline:0; background:transparent; color:#43575e; font-size:10px; }
 .status-filter { display:flex; align-items:center; gap:7px; min-height:38px; padding:0 10px; border:1px solid #dfe5df; border-radius:9px; background:#fffefa; color:#667b78; font-size:10px; white-space:nowrap; }.status-filter input { accent-color:#418878; }

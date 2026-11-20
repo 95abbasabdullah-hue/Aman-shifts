@@ -113,8 +113,8 @@ function stableHash(value: string, length = 16): string {
   return createHash("sha256").update(value).digest("hex").slice(0, length).toUpperCase();
 }
 
-function stableEmployeeCode(name: string, departmentKey: string): string {
-  return `AUTO-${stableHash(`${normalizeEmployeeName(name)}|${departmentKey}`)}`;
+function stableEmployeeCode(name: string): string {
+  return `AUTO-${stableHash(normalizeEmployeeName(name))}`;
 }
 
 function departmentCodeForLabel(label: string): string {
@@ -389,7 +389,7 @@ export function prepareAutomaticRoster(
     const employeeCode =
       existingEmployee?.employeeCode ??
       sourceEmployeeId ??
-      stableEmployeeCode(fullName, department.code);
+      stableEmployeeCode(fullName);
     if (!existingEmployee && usedCodes.has(employeeCode)) {
       fail(
         "employee_id_conflict",

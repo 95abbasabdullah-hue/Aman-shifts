@@ -522,6 +522,7 @@ test(
         .map((department) => ({ ...department, active: true })),
       shiftTypes: DEFAULT_SHIFT_DEFINITIONS.map((shift) => ({
         ...shift,
+        id: `shift-${shift.code}`,
         active: true,
       })),
     };
@@ -533,14 +534,27 @@ test(
       references.shiftTypes,
       references.departments,
     );
-    const plan = prepareAutomaticRoster(parsed, references);
+    const parsedWithUnconfiguredHca = {
+      ...parsed,
+      records: parsed.records.map((record) =>
+        record.rowNumber === 34
+          ? { ...record, sourceDepartment: "HCA" }
+          : record,
+      ),
+    };
+    const plan = prepareAutomaticRoster(parsedWithUnconfiguredHca, references);
     assert.equal(plan.employees.length, 20);
     assert.equal(plan.dates.length, 30);
     assert.equal(plan.assignments.length, 600);
     assert.deepEqual(plan.assignments.find((item) => item.record.rawShiftValue === "D*")?.normalizedShiftCode, "D");
     assert.deepEqual(plan.assignments.find((item) => item.record.rawShiftValue === "N*")?.normalizedShiftCode, "N");
     assert.equal(plan.unknownShiftCounts.get("UNMAPPED"), 1);
-    assert.ok(plan.departments.some((department) => department.code === "HCA" && !department.existingId));
+    assert.ok(
+      plan.departments.some(
+        (department) => department.code === "HCA" && !department.existingId,
+      ),
+      JSON.stringify(plan.departments),
+    );
     const noIdEmployee = plan.employees.find((employee) => !employee.sourceEmployeeId);
     assert.ok(noIdEmployee?.employeeCode.startsWith("AUTO-"));
     assert.equal(noIdEmployee?.existingId, null);

@@ -797,11 +797,17 @@ router.post(
               .returning();
             shift = created;
             importedTypeByCode.set(typeCode, created);
-          } else if (!shift.active || shift.category !== "attendance") {
+          } else if (shift.category !== "attendance") {
             throw new AutoImportValidationError(
               `Unknown status "${code}" conflicts with an existing shift type. No schedule changes were saved.`,
               "invalid_roster",
             );
+          } else if (!shift.active) {
+            await tx
+              .update(shiftTypesTable)
+              .set({ active: true, updatedAt: new Date() })
+              .where(eq(shiftTypesTable.id, shift.id));
+            shift.active = true;
           }
           shiftTypeById.set(shift.id, shift);
         }

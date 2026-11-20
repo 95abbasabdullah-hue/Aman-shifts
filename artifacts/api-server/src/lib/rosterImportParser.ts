@@ -941,14 +941,30 @@ export async function parseRosterWorkbook(
     const shiftCellValues = selectedCandidate.dateColumns.map(({ column }) =>
       rawCellText(row.getCell(column).value).trim(),
     );
-    const hasRosterValues = shiftCellValues.filter(Boolean).length >= 2;
+    const recognizedRosterValues = shiftCellValues.filter((value) => {
+      if (!value) return false;
+      return shiftByCode.has(normalize(normalizeShiftValue(value)));
+    });
+    const hasRosterValues = recognizedRosterValues.length >= 2;
+    const sectionToken = sourceEmployeeName.trim();
+    const repeatedSectionLabel = Boolean(
+      sectionToken &&
+        /^[A-Z0-9][A-Z0-9 _&/-]{1,19}$/.test(sectionToken) &&
+        shiftCellValues.some(Boolean) &&
+        shiftCellValues.every(
+          (value) =>
+            !value ||
+            normalize(value) === normalize(sectionToken),
+        ),
+    );
     const isUnconfiguredSectionLabel = Boolean(
-      !hasSourceEmployeeId &&
-        !roleValue.trim() &&
+      (!hasSourceEmployeeId ||
+        normalize(sourceEmployeeId) === normalize(sectionToken)) &&
+        (!roleValue.trim() || normalize(roleValue) === normalize(sectionToken)) &&
         !employeeByNameMatch &&
-        sourceEmployeeName.trim() === sourceEmployeeName.trim().toUpperCase() &&
-        /^[A-Z0-9][A-Z0-9 _&/-]{1,19}$/.test(sourceEmployeeName.trim()) &&
-        shiftCellValues.every((value) => !value),
+        sectionToken === sectionToken.toUpperCase() &&
+        /^[A-Z0-9][A-Z0-9 _&/-]{1,19}$/.test(sectionToken) &&
+        (shiftCellValues.every((value) => !value) || repeatedSectionLabel),
     );
     if (isUnconfiguredSectionLabel) {
       currentDepartmentId = isDepartmentLabel?.id ?? null;

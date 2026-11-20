@@ -40,6 +40,21 @@ const fmtDate = (date: string, options: Intl.DateTimeFormatOptions = { weekday: 
   new Intl.DateTimeFormat('en', { ...options, timeZone: 'Asia/Qatar' }).format(new Date(`${date}T12:00:00+03:00`));
 const fmtTime = (iso?: string | null) => iso ? iso.slice(0, 5) : '';
 const monthLabel = (month: string) => new Intl.DateTimeFormat('en', { month: 'long', year: 'numeric', timeZone: 'Asia/Qatar' }).format(new Date(`${month}-01T12:00:00+03:00`));
+function previewErrorMessage(error: unknown): string {
+  if (error && typeof error === 'object') {
+    const responseError = (error as { data?: unknown }).data;
+    if (responseError && typeof responseError === 'object') {
+      const message = (responseError as { error?: unknown }).error;
+      if (typeof message === 'string' && message.trim()) return message;
+    }
+    const status = (error as { status?: unknown }).status;
+    if (status === 401) return 'Your sign-in has expired. Sign in again, then retry the preview.';
+    if (status === 403) return 'Administrator access is required to preview a roster.';
+    if (error instanceof TypeError) return 'Could not reach the server. Check your connection and retry.';
+    if (error instanceof Error && error.message.trim()) return error.message;
+  }
+  return 'The roster could not be previewed. Check the workbook and retry.';
+}
 const invalidate = (keys: readonly unknown[]) => queryClient.invalidateQueries({ queryKey: keys });
 const invalidateRosterReads = () => {
   invalidate(getGetMonthlyScheduleQueryKey());
@@ -478,10 +493,24 @@ function ImportsPage() {
   const employees=useListEmployees({activeOnly:true});
   const departments=useListDepartments();
   const shifts=useListShiftTypes();
-  const previewMutation=usePreviewRosterImport({mutation:{onSuccess:(data)=>{setPreview(data);setMapping(data.mapping);setEmployeeMap(Object.fromEntries(data.records.filter(r=>!r.sourceEmployeeId).map(r=>[String(r.rowNumber),r.employeeId||''])));setRegisterNewEmployee({});setRegistrationRoles({});setRegistrationDepartments({});setRememberAliases({});setShiftMap({});invalidate(getListRosterImportsQueryKey());}}});
+  const previewMutation=usePreviewRosterImport({request:{credentials:'same-origin'},mutation:{onSuccess:(data)=>{setPreview(data);setMapping(data.mapping);setEmployeeMap(Object.fromEntries(data.records.filter(r=>!r.sourceEmployeeId).map(r=>[String(r.rowNumber),r.employeeId||''])));setRegisterNewEmployee({});setRegistrationRoles({});setRegistrationDepartments({});setRememberAliases({});setShiftMap({});invalidate(getListRosterImportsQueryKey());}}});
   const resolveMutation=useResolveRosterImport({mutation:{onSuccess:(data)=>{setPreview(data);setRegisterNewEmployee({});setRegistrationRoles({});setRegistrationDepartments({});setRememberAliases({});invalidate(getListRosterImportsQueryKey());invalidate(getListEmployeesQueryKey());}}});
   const confirmMutation=useConfirmRosterImport({mutation:{onSuccess:()=>{setPreview(null);setFile(null);invalidate(getListRosterImportsQueryKey());invalidateRosterReads();}}});
-  const setFileFromInput=(e:FormEvent<HTMLInputElement>)=>{const target=e.currentTarget;setFile(target.files?.[0]||null);};
+  const setFileFromInput=(e:FormEvent<HTMLInputElement>)=>{
+    const target=e.currentTarget;
+    const selected=target.files?.[0]||null;
+    previewMutation.reset();
+    setFile(selected);
+    setPreview(null);
+    setMapping(null);
+    setEmployeeMap({});
+    setRegisterNewEmployee({});
+    setRegistrationRoles({});
+    setRegistrationDepartments({});
+    setRememberAliases({});
+    setShiftMap({});
+    target.value='';
+  };
   const runPreview=()=>{if(file)previewMutation.mutate({data:{file,month,mappingJson:mapping?JSON.stringify(mapping):undefined}});};
   const columns=['format','employeeIdColumn','employeeNameColumn','employeeRoleColumn','departmentColumn','dateColumn','shiftCodeColumn'] as const;
   const mappingFieldNames:Record<(typeof columns)[number],string>={format:'Format',employeeIdColumn:'Employee ID column',employeeNameColumn:'Employee name column',employeeRoleColumn:'Employee role column',departmentColumn:'Department column',dateColumn:'Date column',shiftCodeColumn:'Shift code column'};
@@ -518,15 +547,15 @@ function ImportsPage() {
     <div className="import-layout">
       <section className="import-primary">
         <div className="surface import-upload"><div className="section-head"><div><div className="eyebrow">STEP 01 · SOURCE FILE</div><h2>Choose a roster file</h2></div><span className="format-chip">.xlsx</span></div>
-          <label className={`drop-zone ${file?'has-file':''}`}><input type="file" accept=".xlsx" onChange={setFileFromInput} data-testid="input-roster-file"/>
-            <span className="drop-icon"><FileSpreadsheet size={22}/></span><strong>{file?file.name:'Select an .xlsx roster'}</strong>
+          <label className={`drop-zone ${file?'has-file':''}`}><input type="file" accept=".xlsx" onChange={setFileFromInput} disabled={previewMutation.isPending} data-testid="input-roster-file"/>
+            <span className="drop-icon"><FileSpreadsheet size={22}/></span><strong data-testid="selected-roster-filename">{file?file.name:'Select an .xlsx roster'}</strong>
             <small>{file?`${(file.size/1024).toFixed(0)} KB · ${monthLabel(month)}`:'Your file is reviewed before any roster changes are made.'}</small>
             <span className="button button-secondary button-small">{file?'Choose another':'Browse files'}</span></label>
-          <div className="import-month"><label>Fallback month</label><input type="month" value={month} onChange={e=>setMonth(e.target.value)} data-testid="input-import-month"/>
+          <div className="import-month"><label>Fallback month</label><input type="month" value={month} onChange={e=>setMonth(e.target.value)} disabled={previewMutation.isPending} data-testid="input-import-month"/>
             <button className="button button-primary" onClick={runPreview} disabled={!file||previewMutation.isPending} data-testid="button-preview-import">
-              {previewMutation.isPending?'Reading file…':'Preview roster'} <ArrowRight size={15}/></button></div>
+              {previewMutation.isPending?'Reading file…':previewMutation.isError?'Retry preview':'Preview roster'} <ArrowRight size={15}/></button></div>
           <p className="muted-copy">Dates in the workbook determine the roster period; this month is only used when date headers omit a year.</p>
-          {previewMutation.isError&&<p className="inline-error"><CircleAlert size={15}/> The file could not be previewed. Check the format and try again.</p>}
+          {previewMutation.isError&&<p className="inline-error" role="alert" data-testid="error-roster-preview"><CircleAlert size={15}/> {previewErrorMessage(previewMutation.error)} Your selected file remains available for retry.</p>}
         </div>
         {preview&&<section className="surface preview-panel">
           <div className="section-head"><div><div className="eyebrow">STEP 02 · REVIEW</div><h2>Import preview</h2></div>

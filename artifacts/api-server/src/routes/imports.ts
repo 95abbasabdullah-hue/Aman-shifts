@@ -33,7 +33,12 @@ import {
 } from "@workspace/db";
 import { currentAppUser, requireAdmin } from "../lib/amanAuth";
 import { writeAuditLog } from "../lib/audit";
-import { parseRosterWorkbook } from "../lib/rosterImportParser";
+import {
+  parseRosterWorkbook,
+  type DepartmentReference,
+  type EmployeeReference,
+  type ShiftReference,
+} from "../lib/rosterImportParser";
 import {
   normalizeEmployeeName,
   validateNewEmployeeRegistrations,
@@ -139,12 +144,19 @@ function readStoredPreview(value: Record<string, unknown>): StoredPreview {
   };
 }
 
-async function importResponse(job: typeof importJobsTable.$inferSelect) {
-  const [uploader] = await db
-    .select({ fullName: appUsersTable.fullName })
-    .from(appUsersTable)
-    .where(eq(appUsersTable.id, job.uploadedBy))
-    .limit(1);
+async function importResponse(
+  job: typeof importJobsTable.$inferSelect,
+  knownUploaderName?: string,
+) {
+  let uploaderName = knownUploaderName;
+  if (!uploaderName) {
+    const [uploader] = await db
+      .select({ fullName: appUsersTable.fullName })
+      .from(appUsersTable)
+      .where(eq(appUsersTable.id, job.uploadedBy))
+      .limit(1);
+    uploaderName = uploader?.fullName;
+  }
   return {
     id: job.id,
     month: job.month,
@@ -152,7 +164,7 @@ async function importResponse(job: typeof importJobsTable.$inferSelect) {
     periodEnd: job.periodEnd,
     selectedWorksheet: job.selectedWorksheet,
     status: job.status,
-    uploadedByName: uploader?.fullName ?? "Aman admin",
+    uploadedByName: uploaderName ?? "Aman admin",
     uploadedAt: job.uploadedAt.toISOString(),
     detectedFormat: job.detectedFormat,
     rowCount: job.rowCount,
@@ -164,9 +176,10 @@ async function importResponse(job: typeof importJobsTable.$inferSelect) {
 
 async function previewResponse(
   job: typeof importJobsTable.$inferSelect,
+  uploaderName?: string,
 ): Promise<ImportPreview> {
   return PreviewRosterImportResponse.parse({
-    import: await importResponse(job),
+    import: await importResponse(job, uploaderName),
     columns: readStoredPreview(job.preview).columns,
     mapping: job.mapping,
     periodStart: job.periodStart ?? readStoredPreview(job.preview).periodStart,
@@ -177,6 +190,216 @@ async function previewResponse(
     records: readStoredPreview(job.preview).records,
     issues: readStoredPreview(job.preview).issues,
   });
+}
+
+type PreviewReferenceData = {
+  employees: EmployeeReference[];
+  shiftTypes: ShiftReference[];
+  departments: DepartmentReference[];
+};
+
+export type RosterPreviewRepository = {
+  loadReferenceData: () => Promise<PreviewReferenceData>;
+  createImportJob: (
+    values: typeof importJobsTable.$inferInsert,
+  ) => Promise<typeof importJobsTable.$inferSelect>;
+  writeAuditLog: (input: Parameters<typeof writeAuditLog>[0]) => Promise<void>;
+};
+
+const databaseRosterPreviewRepository: RosterPreviewRepository = {
+  async loadReferenceData() {
+    const [employees, employeeAliases, shiftTypes, departments] =
+      await Promise.all([
+        db
+          .select({
+            id: employeesTable.id,
+            employeeCode: employeesTable.employeeCode,
+            fullName: employeesTable.fullName,
+            departmentId: employeesTable.departmentId,
+          })
+          .from(employeesTable)
+          .where(eq(employeesTable.active, true)),
+        db
+          .select({
+            employeeId: employeeAliasesTable.employeeId,
+            alias: employeeAliasesTable.alias,
+          })
+          .from(employeeAliasesTable),
+        db
+          .select({
+            id: shiftTypesTable.id,
+            code: shiftTypesTable.code,
+            name: shiftTypesTable.name,
+            category: shiftTypesTable.category,
+            displayCode: shiftTypesTable.displayCode,
+          })
+          .from(shiftTypesTable)
+          .where(eq(shiftTypesTable.active, true)),
+        db
+          .select({
+            id: departmentsTable.id,
+            code: departmentsTable.code,
+            name: departmentsTable.name,
+          })
+          .from(departmentsTable)
+          .where(eq(departmentsTable.active, true)),
+      ]);
+    const aliasesByEmployee = new Map<string, string[]>();
+    for (const alias of employeeAliases) {
+      const aliases = aliasesByEmployee.get(alias.employeeId) ?? [];
+      aliases.push(alias.alias);
+      aliasesByEmployee.set(alias.employeeId, aliases);
+    }
+    return {
+      employees: employees.map((employee) => ({
+        ...employee,
+        aliases: aliasesByEmployee.get(employee.id) ?? [],
+      })),
+      shiftTypes,
+      departments,
+    };
+  },
+  async createImportJob(values) {
+    const [job] = await db.insert(importJobsTable).values(values).returning();
+    return job;
+  },
+  writeAuditLog,
+};
+
+export function createRosterPreviewRouter(
+  options: {
+    repository?: RosterPreviewRepository;
+    adminMiddleware?: RequestHandler;
+  } = {},
+): IRouter {
+  const previewRouter: IRouter = Router();
+  const repository = options.repository ?? databaseRosterPreviewRepository;
+  const adminMiddleware = options.adminMiddleware ?? requireAdmin;
+
+  previewRouter.post(
+    "/roster-imports/preview",
+    adminMiddleware,
+    uploadWorkbook,
+    async (req, res): Promise<void> => {
+      if (!req.file) {
+        res.status(400).json({ error: "Choose an .xlsx workbook to preview" });
+        return;
+      }
+      if (!req.file.originalname.toLowerCase().endsWith(".xlsx")) {
+        res.status(415).json({
+          error: "Only .xlsx workbooks are supported in this version",
+        });
+        return;
+      }
+      const fileBytes = new Uint8Array(req.file.buffer);
+      const fileCopy = new ArrayBuffer(fileBytes.byteLength);
+      new Uint8Array(fileCopy).set(fileBytes);
+      const fileBlob = new Blob([fileCopy], {
+        type:
+          req.file.mimetype ||
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const parsedBody = PreviewRosterImportBody.safeParse({
+        file: fileBlob,
+        month: req.body.month,
+        mappingJson: req.body.mappingJson,
+      });
+      if (!parsedBody.success) {
+        res.status(400).json({ error: parsedBody.error.message });
+        return;
+      }
+
+      let mapping = emptyMapping;
+      if (parsedBody.data.mappingJson) {
+        let rawMapping: unknown;
+        try {
+          rawMapping = JSON.parse(parsedBody.data.mappingJson);
+        } catch {
+          res.status(400).json({ error: "Column mapping must be valid JSON" });
+          return;
+        }
+        const mapped = mappingJsonSchema.safeParse(rawMapping);
+        if (!mapped.success) {
+          res.status(400).json({ error: mapped.error.message });
+          return;
+        }
+        mapping = mapped.data;
+      }
+
+      let references: PreviewReferenceData;
+      try {
+        references = await repository.loadReferenceData();
+      } catch (error) {
+        req.log.error({ err: error }, "Could not load roster preview references");
+        res.status(500).json({
+          error: "Roster settings could not be loaded. Retry the preview in a moment.",
+        });
+        return;
+      }
+
+      let parsed: Awaited<ReturnType<typeof parseRosterWorkbook>>;
+      try {
+        parsed = await parseRosterWorkbook(
+          req.file.buffer,
+          parsedBody.data.month,
+          mapping,
+          references.employees,
+          references.shiftTypes,
+          references.departments,
+        );
+      } catch (error) {
+        req.log.warn({ err: error }, "Could not parse roster workbook");
+        res.status(400).json({
+          error:
+            "Could not read this workbook. Check that it is a valid .xlsx file with recognizable roster and date headers, then retry.",
+        });
+        return;
+      }
+
+      const user = currentAppUser(req);
+      const status = parsed.issues.length ? "needs_review" : "ready";
+      const periodStart = parsed.periodStart;
+      const periodEnd = parsed.periodEnd;
+      try {
+        const job = await repository.createImportJob({
+          month: periodStart?.slice(0, 7) ?? parsedBody.data.month,
+          periodStart,
+          periodEnd,
+          selectedWorksheet: parsed.selectedWorksheet,
+          status,
+          detectedFormat: parsed.format,
+          uploadedBy: user.id,
+          rowCount: parsed.records.length,
+          validCount: parsed.records.filter((record) => record.valid).length,
+          issueCount: parsed.issues.length,
+          mapping: { ...parsed.mapping },
+          preview: {
+            columns: parsed.columns,
+            records: parsed.records,
+            issues: parsed.issues,
+            periodStart,
+            periodEnd,
+            selectedWorksheet: parsed.selectedWorksheet,
+            worksheetChoices: parsed.worksheetChoices,
+          },
+        });
+        await repository.writeAuditLog({
+          actorUserId: user.id,
+          action: "roster.import_previewed",
+          subject: `${periodStart?.slice(0, 7) ?? parsedBody.data.month} · ${parsed.records.length} cells`,
+        });
+        res.status(201).json(await previewResponse(job, user.fullName));
+      } catch (error) {
+        req.log.error({ err: error }, "Could not save roster preview");
+        res.status(500).json({
+          error:
+            "The workbook was read, but its preview could not be saved. Your selected file is still available; retry in a moment.",
+        });
+      }
+    },
+  );
+
+  return previewRouter;
 }
 
 async function findVersionResponse(
@@ -225,154 +448,12 @@ router.get(
       .from(importJobsTable)
       .orderBy(desc(importJobsTable.uploadedAt))
       .limit(50);
-    const rows = await Promise.all(jobs.map(importResponse));
+    const rows = await Promise.all(jobs.map((job) => importResponse(job)));
     res.json(ListRosterImportsResponse.parse(rows));
   },
 );
 
-router.post(
-  "/roster-imports/preview",
-  requireAdmin,
-  uploadWorkbook,
-  async (req, res): Promise<void> => {
-    if (!req.file) {
-      res.status(400).json({ error: "Choose an .xlsx workbook to preview" });
-      return;
-    }
-    if (!req.file.originalname.toLowerCase().endsWith(".xlsx")) {
-      res.status(415).json({
-        error: "Only .xlsx workbooks are supported in this version",
-      });
-      return;
-    }
-    const fileBytes = new Uint8Array(req.file.buffer);
-    const fileCopy = new ArrayBuffer(fileBytes.byteLength);
-    new Uint8Array(fileCopy).set(fileBytes);
-    const fileBlob = new Blob([fileCopy], {
-      type: req.file.mimetype || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    });
-    const parsedBody = PreviewRosterImportBody.safeParse({
-      file: fileBlob,
-      month: req.body.month,
-      mappingJson: req.body.mappingJson,
-    });
-    if (!parsedBody.success) {
-      res.status(400).json({ error: parsedBody.error.message });
-      return;
-    }
-
-    let mapping = emptyMapping;
-    if (parsedBody.data.mappingJson) {
-      let rawMapping: unknown;
-      try {
-        rawMapping = JSON.parse(parsedBody.data.mappingJson);
-      } catch {
-        res.status(400).json({ error: "Column mapping must be valid JSON" });
-        return;
-      }
-      const mapped = mappingJsonSchema.safeParse(rawMapping);
-      if (!mapped.success) {
-        res.status(400).json({ error: mapped.error.message });
-        return;
-      }
-      mapping = mapped.data;
-    }
-
-    try {
-      const employees = await db
-        .select({
-          id: employeesTable.id,
-          employeeCode: employeesTable.employeeCode,
-          fullName: employeesTable.fullName,
-          departmentId: employeesTable.departmentId,
-        })
-        .from(employeesTable)
-        .where(eq(employeesTable.active, true));
-      const employeeAliases = await db
-        .select({
-          employeeId: employeeAliasesTable.employeeId,
-          alias: employeeAliasesTable.alias,
-        })
-        .from(employeeAliasesTable);
-      const aliasesByEmployee = new Map<string, string[]>();
-      for (const alias of employeeAliases) {
-        const aliases = aliasesByEmployee.get(alias.employeeId) ?? [];
-        aliases.push(alias.alias);
-        aliasesByEmployee.set(alias.employeeId, aliases);
-      }
-      const employeesWithAliases = employees.map((employee) => ({
-        ...employee,
-        aliases: aliasesByEmployee.get(employee.id) ?? [],
-      }));
-      const shiftTypes = await db
-        .select({
-          id: shiftTypesTable.id,
-          code: shiftTypesTable.code,
-          name: shiftTypesTable.name,
-          category: shiftTypesTable.category,
-          displayCode: shiftTypesTable.displayCode,
-        })
-        .from(shiftTypesTable)
-        .where(eq(shiftTypesTable.active, true));
-      const departments = await db
-        .select({
-          id: departmentsTable.id,
-          code: departmentsTable.code,
-          name: departmentsTable.name,
-        })
-        .from(departmentsTable)
-        .where(eq(departmentsTable.active, true));
-      const parsed = await parseRosterWorkbook(
-        req.file.buffer,
-        parsedBody.data.month,
-        mapping,
-        employeesWithAliases,
-        shiftTypes,
-        departments,
-      );
-      const user = currentAppUser(req);
-      const status = parsed.issues.length ? "needs_review" : "ready";
-      const periodStart = parsed.periodStart;
-      const periodEnd = parsed.periodEnd;
-      const [job] = await db
-        .insert(importJobsTable)
-        .values({
-          month: periodStart?.slice(0, 7) ?? parsedBody.data.month,
-          periodStart,
-          periodEnd,
-          selectedWorksheet: parsed.selectedWorksheet,
-          status,
-          detectedFormat: parsed.format,
-          uploadedBy: user.id,
-          rowCount: parsed.records.length,
-          validCount: parsed.records.filter((record) => record.valid).length,
-          issueCount: parsed.issues.length,
-          mapping: { ...parsed.mapping },
-          preview: {
-            columns: parsed.columns,
-            records: parsed.records,
-            issues: parsed.issues,
-            periodStart,
-            periodEnd,
-            selectedWorksheet: parsed.selectedWorksheet,
-            worksheetChoices: parsed.worksheetChoices,
-          },
-        })
-        .returning();
-      await writeAuditLog({
-        actorUserId: user.id,
-        action: "roster.import_previewed",
-        subject: `${periodStart?.slice(0, 7) ?? parsedBody.data.month} · ${parsed.records.length} cells`,
-      });
-      res.status(201).json(await previewResponse(job));
-    } catch (error) {
-      req.log.warn({ err: error }, "Could not parse roster workbook");
-      res.status(400).json({
-        error: "The workbook could not be read. Check that it is a valid .xlsx file.",
-      });
-    }
-  },
-);
+router.use(createRosterPreviewRouter());
 
 router.post(
   "/roster-imports/:importId/resolve",

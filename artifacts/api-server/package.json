@@ -8,7 +8,8 @@
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:roster-import": "node ./run-roster-import-tests.mjs"
+    "test:roster-import": "node ./run-roster-import-tests.mjs",
+    "test:roster-preview": "node ./run-roster-preview-tests.mjs"
   },
   "dependencies": {
     "@clerk/express": "^2.1.92",

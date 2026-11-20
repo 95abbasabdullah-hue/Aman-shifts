@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode, type TouchEvent as ReactTouchEvent } from 'react';
 import { ClerkProvider, Show, SignIn, SignUp, useAuth, useClerk } from '@clerk/react';
 import { publishableKeyFromHost } from '@clerk/react/internal';
 import { shadcn } from '@clerk/themes';
@@ -411,6 +411,7 @@ function SchedulePage({mine=false}:{mine?:boolean}) {
   const [departmentId,setDepartmentId]=useState('');
   const [selectedDate,setSelectedDate]=useState(dateQatar(new Date()));
   const [showAllStatuses,setShowAllStatuses]=useState(true);
+  const swipeStart=useRef<{x:number;y:number}|null>(null);
   const {data:departments=[]}=useListDepartments();
   const scheduleParams={month,...(departmentId?{departmentId}:{})};
   const refreshOptions={
@@ -447,6 +448,29 @@ function SchedulePage({mine=false}:{mine?:boolean}) {
   const grouped=useMemo(()=>rows.reduce<Record<string,ShiftAssignment[]>>((acc,a)=>{(acc[a.departmentName]??=[]).push(a);return acc;},{}),[rows]);
   const admin=user?.role==='admin';
   const changeMonth=(next:string)=>{setMonth(next);setSelectedDate(`${next}-01`);};
+   const handleRosterTouchStart=(event:ReactTouchEvent<HTMLDivElement>)=>{
+     swipeStart.current=null;
+     if(event.touches.length!==1)return;
+     const target=event.target;
+     if(target instanceof Element&&target.closest('button,a,input,select,textarea,[role="button"]'))return;
+     const touch=event.touches[0];
+     swipeStart.current={x:touch.clientX,y:touch.clientY};
+   };
+   const handleRosterTouchEnd=(event:ReactTouchEvent<HTMLDivElement>)=>{
+     const start=swipeStart.current;
+     swipeStart.current=null;
+     if(!start)return;
+     const touch=event.changedTouches[0];
+     if(!touch)return;
+     const deltaX=touch.clientX-start.x;
+     const deltaY=touch.clientY-start.y;
+     if(Math.abs(deltaX)<56||Math.abs(deltaX)<Math.abs(deltaY)*1.2)return;
+     const [year,monthNumber,day]=selectedDate.split('-').map(Number);
+     const nextDate=new Date(Date.UTC(year,monthNumber-1,day+(deltaX<0?1:-1))).toISOString().slice(0,10);
+     const nextMonth=nextDate.slice(0,7);
+     setSelectedDate(nextDate);
+     if(nextMonth!==month)setMonth(nextMonth);
+   };
   const dateCount=new Date(Number(month.slice(0,4)),Number(month.slice(5,7)),0).getDate();
   const leadingCells=new Date(Number(month.slice(0,4)),Number(month.slice(5,7))-1,1).getDay();
   const dates=Array.from({length:dateCount},(_,i)=>`${month}-${String(i+1).padStart(2,'0')}`);
@@ -495,7 +519,9 @@ function SchedulePage({mine=false}:{mine?:boolean}) {
          ? <EmptyState title="No shifts listed for this month" detail="Your published shift dates will appear here."/>
          : <MyShiftList assignments={rows}/>
          : <>
-      <div className="day-heading"><div><span className="eyebrow">{schedule.status==='published'?'PUBLISHED ROSTER':admin?'DRAFT ROSTER':'ROSTER'}</span><h2>{fmtDate(selectedDate)}</h2></div>
+      <div className="team-day-swipe-area" role="region" aria-label={`Roster for ${fmtDate(selectedDate)}. Swipe left for the next day or right for the previous day.`} data-testid="team-day-swipe-area"
+        onTouchStart={handleRosterTouchStart} onTouchEnd={handleRosterTouchEnd} onTouchCancel={()=>{swipeStart.current=null;}}>
+       <div className="day-heading"><div><span className="eyebrow">{schedule.status==='published'?'PUBLISHED ROSTER':admin?'DRAFT ROSTER':'ROSTER'}</span><h2 aria-live="polite">{fmtDate(selectedDate)}</h2></div>
         <span className={`status-pill ${schedule.status==='published'?'status-live':'status-draft'}`}><i/>{schedule.status==='published'?'Published':'Draft'}</span></div>
        {rows.length===0?<EmptyState title={showAllStatuses?'No employee statuses for this date':'No working shifts for this date'} detail="Choose another day to see the roster."/>:
         <div className="department-groups">{Object.entries(grouped).map(([department,assignments])=><section className="department-group" key={department}>
@@ -504,6 +530,7 @@ function SchedulePage({mine=false}:{mine?:boolean}) {
              onEdit={()=>setEditAssignment(a)} onDelete={()=>{if(schedule.versionId&&window.confirm(`Remove ${a.employeeName}’s ${a.shiftCode} assignment?`))deletes.mutate({versionId:schedule.versionId,assignmentId:a.id});}} />)}
         </section>)}</div>}
       {schedule.assignments.length===0&&rows.length===0&&<p className="quiet-note">There are no assignments in this roster version yet.</p>}
+      </div>
        </>}
     </>}
      {editAssignment!==false&&<FormModal title={editAssignment?'Edit shift assignment':'Add shift assignment'} description="Changes are saved to the roster and recorded in activity history."

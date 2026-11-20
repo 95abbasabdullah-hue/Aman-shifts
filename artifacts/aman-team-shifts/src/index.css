@@ -598,6 +598,7 @@ a { color: inherit; text-decoration: none; }
 .calendar-date:hover { background:#edf5f1; }.calendar-date.chosen { background:#5f70bf; color:#fff; font-weight:700; }.calendar-date small { font-size:10px; }
 .date-count { display:inline-grid; place-items:center; min-width:14px; height:14px; padding:0 3px; border-radius:5px; background:#dceee8; color:#347a72; font:700 8px var(--app-font-mono); font-style:normal; }
 .chosen .date-count { background:#ffffff31; color:#fff; }
+.team-day-swipe-area { touch-action:pan-y; }
 .day-heading { display:flex; align-items:flex-end; justify-content:space-between; margin:26px 1px 13px; }
 .day-heading h2 { margin:6px 0 0; color:#2e444d; font:700 22px var(--app-font-serif); letter-spacing:-.035em; }
 .status-pill { display:inline-flex; align-items:center; gap:6px; padding:6px 9px; border-radius:7px; font:700 9px var(--app-font-mono); text-transform:capitalize; }

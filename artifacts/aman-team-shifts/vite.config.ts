@@ -28,8 +28,10 @@ if (!basePath) {
   );
 }
 
+const normalizedBasePath = basePath.endsWith('/') ? basePath : `${basePath}/`;
+
 export default defineConfig({
-  base: basePath,
+  base: normalizedBasePath,
   plugins: [
     react(),
     tailwindcss(),
@@ -42,12 +44,12 @@ export default defineConfig({
         'apple-touch-icon.png',
       ],
       manifest: {
-        id: '/',
+        id: normalizedBasePath,
         name: 'Aman Team Shifts',
         short_name: 'Aman Shifts',
         description: 'A clear, dependable view of the Aman Nursing monthly roster.',
-        start_url: '/',
-        scope: '/',
+        start_url: normalizedBasePath,
+        scope: normalizedBasePath,
         display: 'standalone',
         background_color: '#f6f5ef',
         theme_color: '#203942',
@@ -55,13 +57,13 @@ export default defineConfig({
         dir: 'ltr',
         icons: [
           {
-            src: '/pwa-192.png',
+            src: `${normalizedBasePath}pwa-192.png`,
             sizes: '192x192',
             type: 'image/png',
             purpose: 'any',
           },
           {
-            src: '/pwa-512.png',
+            src: `${normalizedBasePath}pwa-512.png`,
             sizes: '512x512',
             type: 'image/png',
             purpose: 'any maskable',
@@ -71,7 +73,7 @@ export default defineConfig({
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,webmanifest,woff2}'],
         globIgnores: ['**/api/**'],
-        navigateFallback: '/index.html',
+        navigateFallback: `${normalizedBasePath}index.html`,
         navigateFallbackDenylist: [/^\/api(?:\/|$)/],
         cleanupOutdatedCaches: true,
         clientsClaim: true,

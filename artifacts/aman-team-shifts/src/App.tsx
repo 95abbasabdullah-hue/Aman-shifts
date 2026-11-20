@@ -485,10 +485,11 @@ function MyShiftList({assignments}:{assignments:ShiftAssignment[]}) {
   return <section className="surface my-shift-list" aria-label="My shifts by date" data-testid="my-shift-list">
     {ordered.map(assignment=>{
       const status=displayShiftStatus(assignment);
-      return <article className="my-shift-item" key={assignment.id} data-testid={`my-shift-${assignment.date}`}>
+       return <article className="my-shift-item" key={assignment.id} data-status-code={status.code}
+         data-testid={`my-shift-${assignment.date}`}
+         style={{'--shift-color':status.color} as React.CSSProperties}>
         <time dateTime={assignment.date}>{fmtDate(assignment.date)}</time>
-        <span className="my-shift-status" data-status-code={status.code}
-          style={{'--shift-color':status.color} as React.CSSProperties}>{status.code}</span>
+         <span className="my-shift-status">{status.code}</span>
       </article>;
     })}
   </section>;
@@ -925,6 +926,14 @@ function AuthPage({type}:{type:'signin'|'signup'}) {
     </div></main>;
 }
 
+function SignInRoute() {
+  return <AuthPage type="signin"/>;
+}
+
+function SignUpRoute() {
+  return <AuthPage type="signup"/>;
+}
+
 function AuthSwitch() {
   const [,setLocation]=useLocation();
   return <ClerkProvider publishableKey={clerkPubKey} proxyUrl={clerkProxyUrl} appearance={appearance}
@@ -934,8 +943,8 @@ function AuthSwitch() {
     routerPush={to=>setLocation(stripBase(to))} routerReplace={to=>setLocation(stripBase(to),{replace:true})}>
     <QueryClientProvider client={queryClient}><CacheOnUserChange/><HealthMonitor/><Switch>
       <Route path="/"><><Show when="signed-in"><Redirect to="/dashboard"/></Show><Show when="signed-out"><PublicHome/></Show></></Route>
-      <Route path="/sign-in/*?" component={()=> <AuthPage type="signin"/>}/>
-      <Route path="/sign-up/*?" component={()=> <AuthPage type="signup"/>}/>
+      <Route path="/sign-in/*?" component={SignInRoute}/>
+      <Route path="/sign-up/*?" component={SignUpRoute}/>
       <Route path="/dashboard" component={()=> <SignedInOnly><DashboardPage/></SignedInOnly>}/>
       <Route path="/schedule" component={()=> <SignedInOnly><SchedulePage/></SignedInOnly>}/>
       <Route path="/select-name" component={()=> <SignedInOnly><EmployeeLinkPage/></SignedInOnly>}/>

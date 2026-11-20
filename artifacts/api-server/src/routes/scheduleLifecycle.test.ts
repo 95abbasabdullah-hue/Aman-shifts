@@ -396,6 +396,18 @@ test("schedule reads and publication lifecycle preserve cross-month history", as
     const baseUrl = `http://127.0.0.1:${address.port}/api`;
 
     await t.test("links a signed-in account to one available employee", async () => {
+      const [directoryOnlyEmployee] = await db
+        .insert(employeesTable)
+        .values({
+          employeeCode: `TEST-${suffix}-NO-ROSTER`,
+          fullName: `Directory-only employee ${suffix}`,
+          jobTitle: "Registered Nurse",
+          departmentId: seed!.department.id,
+          active: true,
+        })
+        .returning({ id: employeesTable.id });
+      seed!.importedEmployeeIds.push(directoryOnlyEmployee!.id);
+
       const options = await sendJson(
         baseUrl,
         "/employee-link-options",
@@ -407,8 +419,15 @@ test("schedule reads and publication lifecycle preserve cross-month history", as
         fullName: string;
         departmentName: string;
       }>;
-      assert.ok(employees.some((employee) => employee.id === seed!.employees[1]!.id));
-      assert.ok(!employees.some((employee) => employee.id === seed!.employees[0]!.id));
+      assert.deepEqual(
+        employees.map((employee) => employee.id),
+        [seed!.employees[1]!.id],
+        "only unlinked employees from the latest published workbook are offered",
+      );
+      assert.ok(
+        !employees.some((employee) => employee.id === directoryOnlyEmployee!.id),
+        "employees not present in the published Excel roster are not offered",
+      );
 
       const alreadyClaimed = await sendJson(
         baseUrl,

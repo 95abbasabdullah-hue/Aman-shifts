@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import {
   GetCurrentUserResponse,
@@ -11,6 +11,8 @@ import {
   db,
   departmentsTable,
   employeesTable,
+  rosterVersionsTable,
+  shiftAssignmentsTable,
   type AppUser,
 } from "@workspace/db";
 import { currentAppUser } from "../lib/amanAuth";
@@ -55,16 +57,43 @@ router.get("/me", async (req, res): Promise<void> => {
 
 router.get("/employee-link-options", async (req, res): Promise<void> => {
   const user = currentAppUser(req);
-  const options = await db
+  const [latestPublishedVersion] = (await db
+    .select()
+    .from(rosterVersionsTable)
+    .where(eq(rosterVersionsTable.status, "published"))
+    .orderBy(desc(rosterVersionsTable.createdAt)))
+    .sort((left, right) => {
+      const leftEnd = left.periodEnd ?? `${left.month}-31`;
+      const rightEnd = right.periodEnd ?? `${right.month}-31`;
+      return (
+        rightEnd.localeCompare(leftEnd) ||
+        right.createdAt.getTime() - left.createdAt.getTime()
+      );
+    });
+  if (!latestPublishedVersion) {
+    res.json(GetEmployeeLinkOptionsResponse.parse([]));
+    return;
+  }
+
+  const rosterRows = await db
     .select({
       id: employeesTable.id,
       employeeCode: employeesTable.employeeCode,
-      fullName: employeesTable.fullName,
+      workbookName: shiftAssignmentsTable.sourceEmployeeName,
+      directoryName: employeesTable.fullName,
       jobTitle: employeesTable.jobTitle,
       departmentName: departmentsTable.name,
       linkedUserId: appUsersTable.id,
     })
-    .from(employeesTable)
+    .from(shiftAssignmentsTable)
+    .innerJoin(
+      rosterVersionsTable,
+      eq(rosterVersionsTable.id, shiftAssignmentsTable.versionId),
+    )
+    .innerJoin(
+      employeesTable,
+      eq(employeesTable.id, shiftAssignmentsTable.employeeId),
+    )
     .innerJoin(
       departmentsTable,
       eq(departmentsTable.id, employeesTable.departmentId),
@@ -75,6 +104,8 @@ router.get("/employee-link-options", async (req, res): Promise<void> => {
     )
     .where(
       and(
+        eq(shiftAssignmentsTable.versionId, latestPublishedVersion.id),
+        isNotNull(shiftAssignmentsTable.sourceEmployeeName),
         eq(employeesTable.active, true),
         eq(departmentsTable.active, true),
         inArray(departmentsTable.code, ["ED", "ICU"]),
@@ -83,11 +114,35 @@ router.get("/employee-link-options", async (req, res): Promise<void> => {
           : or(isNull(appUsersTable.id), eq(appUsersTable.id, user.id)),
       ),
     )
-    .orderBy(asc(employeesTable.fullName), asc(employeesTable.employeeCode));
+    .orderBy(asc(shiftAssignmentsTable.date), asc(employeesTable.employeeCode));
+  const uniqueOptions = new Map<
+    string,
+    {
+      id: string;
+      employeeCode: string;
+      fullName: string;
+      jobTitle: string;
+      departmentName: string;
+    }
+  >();
+  for (const row of rosterRows) {
+    if (!uniqueOptions.has(row.id)) {
+      uniqueOptions.set(row.id, {
+        id: row.id,
+        employeeCode: row.employeeCode,
+        fullName: row.workbookName?.trim() || row.directoryName,
+        jobTitle: row.jobTitle,
+        departmentName: row.departmentName,
+      });
+    }
+  }
+  const options = [...uniqueOptions.values()].sort(
+    (left, right) =>
+      left.fullName.localeCompare(right.fullName) ||
+      left.employeeCode.localeCompare(right.employeeCode),
+  );
   res.json(
-    GetEmployeeLinkOptionsResponse.parse(
-      options.map(({ linkedUserId: _linkedUserId, ...option }) => option),
-    ),
+    GetEmployeeLinkOptionsResponse.parse(options),
   );
 });
 

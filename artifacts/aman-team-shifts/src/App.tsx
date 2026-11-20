@@ -16,13 +16,15 @@ import {
   getListRosterVersionsQueryKey, getListShiftTypesQueryKey,
   useCreateDepartment, useCreateEmployee, useCreateRosterAssignment, useCreateShiftType,
   useCreateRosterVersion,
-  useConfirmRosterImport, useDeleteRosterAssignment, useGetCurrentUser, useGetDashboardSummary,
+  useAutomaticRosterImport, useDeleteRosterAssignment, useGetCurrentUser, useGetDashboardSummary,
   useGetMonthlySchedule, useGetMySchedule, useGetRecentActivity, useHealthCheck, useListDepartments,
   useGetRosterVersionSchedule,
   useListEmployees, useListRosterImports, useListRosterVersions, useListShiftTypes,
-  usePreviewRosterImport, usePublishRosterVersion, useResolveRosterImport, useRollbackRosterVersion,
+  usePreviewRosterImport, useResolveRosterImport, useConfirmRosterImport,
+  usePublishRosterVersion, useRollbackRosterVersion,
   useUpdateDepartment, useUpdateEmployee, useUpdateRosterAssignment, useUpdateShiftType,
-  type ActivityItem, type Department, type Employee, type ImportMapping, type ImportPreview,
+  type ActivityItem, type AutomaticRosterImportResult, type Department, type Employee,
+  type ImportMapping, type ImportPreview,
   type RosterVersion, type ShiftAssignment, type ShiftType,
 } from '@workspace/api-client-react';
 import { Link, Redirect, Route, Router as WouterRouter, Switch, useLocation } from 'wouter';
@@ -311,6 +313,7 @@ function SchedulePage({mine=false}:{mine?:boolean}) {
   const [month,setMonth]=useState(monthNow());
   const [departmentId,setDepartmentId]=useState('');
   const [selectedDate,setSelectedDate]=useState(dateQatar(new Date()));
+  const [showAllStatuses,setShowAllStatuses]=useState(false);
   const {data:departments=[]}=useListDepartments();
   const scheduleParams={month,...(departmentId?{departmentId}:{})};
   const teamQuery=useGetMonthlySchedule(scheduleParams,{query:{enabled:!mine,queryKey:getGetMonthlyScheduleQueryKey(scheduleParams)}});
@@ -322,7 +325,7 @@ function SchedulePage({mine=false}:{mine?:boolean}) {
   const refetch=mine?mineQuery.refetch:teamQuery.refetch;
   const {data:user}=useGetCurrentUser();
   const [editAssignment,setEditAssignment]=useState<ShiftAssignment|null|false>(false);
-   const rows=schedule?.assignments.filter(a=>a.date===selectedDate&&a.displayInCalendar) ?? [];
+   const rows=schedule?.assignments.filter(a=>a.date===selectedDate&&(showAllStatuses||a.isWorking)) ?? [];
   const grouped=useMemo(()=>rows.reduce<Record<string,ShiftAssignment[]>>((acc,a)=>{(acc[a.departmentName]??=[]).push(a);return acc;},{}),[rows]);
   const admin=user?.role==='admin';
   const changeMonth=(next:string)=>{setMonth(next);setSelectedDate(`${next}-01`);};
@@ -346,9 +349,10 @@ function SchedulePage({mine=false}:{mine?:boolean}) {
       actions={<MonthPicker month={month} onChange={changeMonth}/>}/>
     <div className="schedule-controls">
       <div className="schedule-month-name"><span>{monthLabel(month)}</span><span className="schedule-timezone">Asia/Qatar · GMT+03:00</span></div>
-      {!mine && <label className="filter-select"><Filter size={15}/><select value={departmentId} onChange={e=>setDepartmentId(e.target.value)} aria-label="Filter by department" data-testid="select-department-filter">
+       {!mine && <label className="filter-select"><Filter size={15}/><select value={departmentId} onChange={e=>setDepartmentId(e.target.value)} aria-label="Filter by department" data-testid="select-department-filter">
         <option value="">All departments</option>{departments.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select><ChevronDown size={15}/></label>}
-      {admin && !mine && <button className="button button-primary" disabled={schedule?.status!=='draft'||!schedule.versionId} onClick={()=>setEditAssignment(null)} data-testid="button-add-assignment"><Plus size={16}/> Add shift</button>}
+       {!mine&&<label className="status-filter"><input type="checkbox" checked={showAllStatuses} onChange={e=>setShowAllStatuses(e.target.checked)} data-testid="toggle-all-statuses"/><span>All statuses</span></label>}
+       {admin && !mine && <button className="button button-primary" disabled={!schedule?.versionId} onClick={()=>setEditAssignment(null)} data-testid="button-add-assignment"><Plus size={16}/> Add shift</button>}
     </div>
      {isLoading?<SpinnerBlock/>:isError||!schedule?<QueryError message={scheduleErrorMessage(scheduleError)} retry={()=>refetch()}/>:!schedule.versionId&&schedule.assignments.length===0?
        <EmptyState title="No published schedule available for this period." detail="Your scheduling team has not published a roster for this month yet."/>:<>
@@ -359,15 +363,15 @@ function SchedulePage({mine=false}:{mine?:boolean}) {
       </div>
       <div className="day-heading"><div><span className="eyebrow">{schedule.status==='published'?'PUBLISHED ROSTER':admin?'DRAFT ROSTER':'ROSTER'}</span><h2>{fmtDate(selectedDate)}</h2></div>
         <span className={`status-pill ${schedule.status==='published'?'status-live':'status-draft'}`}><i/>{schedule.status==='published'?'Published':'Draft'}</span></div>
-      {rows.length===0?<EmptyState title="No shifts for this date" detail="Choose another day to see the published team assignments."/>:
+       {rows.length===0?<EmptyState title={showAllStatuses?'No employee statuses for this date':'No working shifts for this date'} detail="Choose another day to see the roster."/>:
         <div className="department-groups">{Object.entries(grouped).map(([department,assignments])=><section className="department-group" key={department}>
          <div className="department-title"><span>{department}</span><span className="department-count">{assignments.filter(a=>a.isWorking).length} active shifts</span></div>
-          {assignments.map(a=><ShiftRow assignment={a} key={a.id} admin={admin&&schedule.status==='draft'}
+           {assignments.map(a=><ShiftRow assignment={a} key={a.id} admin={admin}
              onEdit={()=>setEditAssignment(a)} onDelete={()=>{if(schedule.versionId&&window.confirm(`Remove ${a.employeeName}’s ${a.shiftCode} assignment?`))deletes.mutate({versionId:schedule.versionId,assignmentId:a.id});}} />)}
         </section>)}</div>}
       {schedule.assignments.length===0&&rows.length===0&&<p className="quiet-note">There are no assignments in this roster version yet.</p>}
     </>}
-    {editAssignment!==false&&<FormModal title={editAssignment?'Edit shift assignment':'Add shift assignment'} description="Changes affect this draft roster version."
+     {editAssignment!==false&&<FormModal title={editAssignment?'Edit shift assignment':'Add shift assignment'} description="Changes are saved to the roster and recorded in activity history."
       fields={[{name:'date',label:'Shift date',type:'date',value:editAssignment?.date||selectedDate},
         {name:'employeeId',label:'Employee',type:'select',options:(allEmployees.data||[]).map(e=>({value:e.id,label:`${e.fullName} · ${e.employeeCode}`})),value:editAssignment?.employeeId},
         {name:'shiftTypeId',label:'Shift type',type:'select',options:(shiftTypes.data||[]).filter(s=>s.active).map(s=>({value:s.id,label:`${s.name} · ${s.code}`})),value:editAssignment?.shiftTypeId},
@@ -382,7 +386,7 @@ function SchedulePage({mine=false}:{mine?:boolean}) {
 
 function ShiftRow({assignment,admin,onEdit,onDelete}:{assignment:ShiftAssignment;admin:boolean;onEdit:()=>void;onDelete:()=>void}) {
   const initials=assignment.employeeName.split(' ').map(p=>p[0]).slice(0,2).join('').toUpperCase();
-  const shiftLabel=assignment.shiftCode;
+   const shiftLabel=assignment.shiftCode||'Blank';
   return <div className="shift-row" data-testid={`row-assignment-${assignment.id}`}>
     <span className="staff-avatar">{initials}</span><div className="shift-card" style={{'--shift-color':assignment.shiftColor} as React.CSSProperties}>
       <div className="shift-staff"><strong>{assignment.employeeName}</strong><span>{assignment.employeeCode}</span></div>
@@ -500,7 +504,7 @@ function DirectoryPage({kind}:{kind:'employees'|'departments'|'shifts'}) {
   </AppShell>;
 }
 
-function ImportsPage() {
+export function LegacyImportsPage() {
   const [month,setMonth]=useState(monthNow());
   const [preview,setPreview]=useState<ImportPreview|null>(null);
   const [mapping,setMapping]=useState<ImportMapping|null>(null);
@@ -634,6 +638,65 @@ function ImportsPage() {
              <div className="import-history-list">{imports.data.slice(0,6).map(item=><div className="import-history-row" key={item.id}><FileSpreadsheet size={16}/><span><b>{item.periodStart&&item.periodEnd?`${item.periodStart} – ${item.periodEnd}`:monthLabel(item.month)}</b><small>{item.uploadedByName} · {item.rowCount} cells</small></span><em className={`import-state ${item.status}`}>{item.status.replace('_',' ')}</em></div>)}</div>}
         </section>
       </aside>
+    </div>
+  </AppShell>;
+}
+
+function ImportsPage() {
+  const [file,setFile]=useState<File|null>(null);
+  const [result,setResult]=useState<AutomaticRosterImportResult|null>(null);
+  const imports=useListRosterImports();
+  const uploadMutation=useAutomaticRosterImport({request:{credentials:'same-origin'},mutation:{onSuccess:(data)=>{
+    setResult(data);
+    setFile(null);
+    invalidate(getListRosterImportsQueryKey());
+    invalidateRosterReads();
+    invalidate(getListEmployeesQueryKey());
+    invalidate(getListDepartmentsQueryKey());
+    invalidate(getListShiftTypesQueryKey());
+  }}});
+  const setFileFromInput=(e:FormEvent<HTMLInputElement>)=>{
+    const target=e.currentTarget;
+    setFile(target.files?.[0]||null);
+    setResult(null);
+    uploadMutation.reset();
+    target.value='';
+  };
+  const upload=()=>{if(file)uploadMutation.mutate({data:{file}});};
+  const uploadError=uploadMutation.error as {data?:{error?:unknown}}|undefined;
+  const errorMessage=typeof uploadError?.data?.error==='string'
+    ? uploadError.data.error
+    : 'The roster could not be imported. The current published schedule was left unchanged.';
+  return <AppShell title="Roster imports"><PageHeading eyebrow="AUTOMATIC IMPORT" title="Roster imports" detail="Upload one Excel workbook. A validated roster is matched, saved, and published automatically."/>
+    <div className="import-layout">
+      <section className="import-primary">
+        <div className="surface import-upload"><div className="section-head"><div><div className="eyebrow">ONE STEP</div><h2>Upload and publish a roster</h2></div><span className="format-chip">.xlsx</span></div>
+          <label className={`drop-zone ${file?'has-file':''}`}><input type="file" accept=".xlsx" onChange={setFileFromInput} disabled={uploadMutation.isPending} data-testid="input-roster-file"/>
+            <span className="drop-icon"><FileSpreadsheet size={22}/></span><strong data-testid="selected-roster-filename">{file?file.name:'Select an .xlsx roster'}</strong>
+            <small>{file?`${(file.size/1024).toFixed(0)} KB · ready to upload`:'Dates, employees, departments, and shifts are detected from the workbook.'}</small>
+            <span className="button button-secondary button-small">{file?'Choose another':'Browse files'}</span></label>
+          <div className="import-month">
+            <span className="muted-copy">Validated workbooks publish automatically. Ambiguous identities or invalid dates are rejected without changing the current roster.</span>
+            <button className="button button-primary" onClick={upload} disabled={!file||uploadMutation.isPending} data-testid="button-auto-import">
+              {uploadMutation.isPending?'Validating and publishing…':uploadMutation.isError?'Retry upload':'Upload & publish'} <ArrowRight size={15}/></button></div>
+          <p className="muted-copy">Employee accounts are not created. Unknown shift values are preserved as non-working attendance and flagged.</p>
+          {uploadMutation.isError&&<p className="inline-error" role="alert" data-testid="error-auto-import"><CircleAlert size={15}/> {errorMessage} The existing published roster was not replaced.</p>}
+        </div>
+        {result&&<section className="surface auto-import-result" data-testid="auto-import-result" role="status">
+          <div className="section-head"><div><div className="eyebrow">{result.alreadyImported?'NO DUPLICATE CREATED':'ROSTER ACTIVE'}</div>
+            <h2>{result.alreadyImported?'This workbook was already imported':'Schedule published'}</h2></div>
+            <span className={`status-pill ${result.version.status==='published'?'status-live':'status-review'}`}><i/>{result.version.status}</span></div>
+          <p className="muted-copy">{result.version.periodStart} to {result.version.periodEnd} · {result.import.selectedWorksheet||'Latest schedule worksheet'}</p>
+          <div className="preview-stats"><span><b>{result.employeeCount}</b> staff</span><span><b>{result.dateCount}</b> dates</span><span><b>{result.assignmentCount}</b> cells</span><span><b>{result.newEmployeeCount}</b> new staff</span></div>
+          <div className="department-counts">{result.departmentCounts.map(department=><span key={department.departmentCode}><b>{department.departmentCode}</b> {department.employeeCount}</span>)}</div>
+          {result.warnings.length>0&&<div className="issue-list">{result.warnings.map((warning,index)=><div className="issue-row" key={`${warning}-${index}`}><CircleAlert size={15}/><span>{warning}</span></div>)}</div>}
+          <Link href="/schedule" className="button button-primary" data-testid="link-view-imported-schedule">Open Team Shifts <ArrowRight size={15}/></Link>
+        </section>}
+      </section>
+      <aside className="import-aside"><section className="surface import-history"><div className="section-head"><div><div className="eyebrow">RECENT FILES</div><h3>Import history</h3></div></div>
+          {imports.isLoading?<div className="mini-skeleton"><i/><i/><i/></div>:imports.isError?<QueryError message="Recent imports are unavailable." retry={()=>imports.refetch()}/>:!imports.data?.length?<p className="muted-copy">Uploaded roster files will be listed here.</p>:
+            <div className="import-history-list">{imports.data.slice(0,8).map(item=><div className="import-history-row" key={item.id}><FileSpreadsheet size={16}/><span><b>{item.periodStart&&item.periodEnd?`${item.periodStart} – ${item.periodEnd}`:monthLabel(item.month)}</b><small>{item.uploadedByName} · {item.rowCount} cells</small></span><em className={`import-state ${item.status}`}>{item.status.replace('_',' ')}</em></div>)}</div>}
+        </section></aside>
     </div>
   </AppShell>;
 }

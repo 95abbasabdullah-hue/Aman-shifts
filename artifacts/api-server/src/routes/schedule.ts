@@ -327,11 +327,11 @@ async function versionResponse(
   };
 }
 
-async function ensureDraft(versionId: string) {
+async function ensureEditableRoster(versionId: string) {
   const version = await getVersion(versionId);
   if (!version) return { error: "Roster version not found" as const };
-  if (version.status !== "draft") {
-    return { error: "Only draft roster versions can be changed" as const };
+  if (version.status === "archived") {
+    return { error: "Archived roster versions cannot be changed" as const };
   }
   return { version };
 }
@@ -764,15 +764,15 @@ router.post(
       });
       return;
     }
-    const draft = await ensureDraft(params.data.versionId);
-    if (!draft.version) {
-      res.status(draft.error === "Roster version not found" ? 404 : 409).json({
-        error: draft.error,
+    const editable = await ensureEditableRoster(params.data.versionId);
+    if (!editable.version) {
+      res.status(editable.error === "Roster version not found" ? 404 : 409).json({
+        error: editable.error,
       });
       return;
     }
-    const draftPeriod = periodForVersion(draft.version);
-    if (body.data.date < draftPeriod.start || body.data.date > draftPeriod.end) {
+    const versionPeriod = periodForVersion(editable.version);
+    if (body.data.date < versionPeriod.start || body.data.date > versionPeriod.end) {
       res.status(400).json({ error: "Shift date must be within the roster period" });
       return;
     }
@@ -780,7 +780,7 @@ router.post(
       const [created] = await db
         .insert(shiftAssignmentsTable)
         .values({
-          versionId: draft.version.id,
+          versionId: editable.version.id,
           employeeId: body.data.employeeId,
           shiftTypeId: body.data.shiftTypeId,
           date: body.data.date,
@@ -788,7 +788,7 @@ router.post(
         })
         .returning();
       const assignment = await assignmentById(
-        draft.version.id,
+        editable.version.id,
         created.id,
       );
       await writeAuditLog({
@@ -822,17 +822,17 @@ router.patch(
       });
       return;
     }
-    const draft = await ensureDraft(params.data.versionId);
-    if (!draft.version) {
-      res.status(draft.error === "Roster version not found" ? 404 : 409).json({
-        error: draft.error,
+    const editable = await ensureEditableRoster(params.data.versionId);
+    if (!editable.version) {
+      res.status(editable.error === "Roster version not found" ? 404 : 409).json({
+        error: editable.error,
       });
       return;
     }
-    const draftPeriod = periodForVersion(draft.version);
+    const versionPeriod = periodForVersion(editable.version);
     if (
       body.data.date &&
-      (body.data.date < draftPeriod.start || body.data.date > draftPeriod.end)
+      (body.data.date < versionPeriod.start || body.data.date > versionPeriod.end)
     ) {
       res.status(400).json({ error: "Shift date must be within the roster period" });
       return;
@@ -853,7 +853,7 @@ router.patch(
         return;
       }
       const assignment = await assignmentById(
-        draft.version.id,
+        editable.version.id,
         updated.id,
       );
       await writeAuditLog({
@@ -880,15 +880,15 @@ router.delete(
       res.status(400).json({ error: params.error.message });
       return;
     }
-    const draft = await ensureDraft(params.data.versionId);
-    if (!draft.version) {
-      res.status(draft.error === "Roster version not found" ? 404 : 409).json({
-        error: draft.error,
+    const editable = await ensureEditableRoster(params.data.versionId);
+    if (!editable.version) {
+      res.status(editable.error === "Roster version not found" ? 404 : 409).json({
+        error: editable.error,
       });
       return;
     }
     const existing = await assignmentById(
-      draft.version.id,
+      editable.version.id,
       params.data.assignmentId,
     );
     if (!existing) {

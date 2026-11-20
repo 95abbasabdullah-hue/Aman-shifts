@@ -403,6 +403,54 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ImportPreview"
+  /roster-imports/automatic:
+    post:
+      operationId: automaticRosterImport
+      tags: [imports]
+      summary: Validate and publish a roster from one workbook upload
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/AutomaticRosterImportInput"
+      responses:
+        "201":
+          description: Workbook validated and published automatically
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutomaticRosterImportResult"
+        "200":
+          description: This workbook was already imported; no duplicate version was created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutomaticRosterImportResult"
+        "400":
+          description: Invalid upload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: Upload conflicts with an existing employee identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutomaticRosterImportError"
+        "422":
+          description: Workbook validation failed; the current roster is unchanged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutomaticRosterImportError"
+        "500":
+          description: Import failed; the current roster is unchanged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutomaticRosterImportError"
   /roster-imports/{importId}/resolve:
     post:
       operationId: resolveRosterImport
@@ -895,6 +943,40 @@ components:
         month: { type: string, pattern: "^\\d{4}-\\d{2}$" }
         mappingJson: { type: string, maxLength: 10000 }
       required: [file, month]
+    AutomaticRosterImportInput:
+      type: object
+      properties:
+        file: { type: string, format: binary }
+      required: [file]
+    AutomaticRosterImportResult:
+      type: object
+      properties:
+        import: { $ref: "#/components/schemas/RosterImport" }
+        version: { $ref: "#/components/schemas/RosterVersion" }
+        employeeCount: { type: integer }
+        newEmployeeCount: { type: integer }
+        dateCount: { type: integer }
+        assignmentCount: { type: integer }
+        departmentCounts:
+          type: array
+          items:
+            type: object
+            properties:
+              departmentCode: { type: string }
+              departmentName: { type: string }
+              employeeCount: { type: integer }
+            required: [departmentCode, departmentName, employeeCount]
+        warnings:
+          type: array
+          items: { type: string }
+        alreadyImported: { type: boolean }
+      required: [import, version, employeeCount, newEmployeeCount, dateCount, assignmentCount, departmentCounts, warnings, alreadyImported]
+    AutomaticRosterImportError:
+      type: object
+      properties:
+        error: { type: string }
+        code: { type: string }
+      required: [error, code]
     EmployeeResolution:
       type: object
       properties:

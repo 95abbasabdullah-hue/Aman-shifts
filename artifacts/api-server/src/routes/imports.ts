@@ -1,8 +1,10 @@
 import { Router, type IRouter, type RequestHandler } from "express";
 import multer from "multer";
-import { and, count, desc, eq, inArray } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
+  AutomaticRosterImportResponse,
   ConfirmRosterImportBody,
   ConfirmRosterImportParams,
   ConfirmRosterImportResponse,
@@ -44,6 +46,11 @@ import {
   validateNewEmployeeRegistrations,
 } from "../lib/employeeIdentity";
 import { normalizeShiftValue } from "../lib/shiftDefinitions";
+import {
+  AutomaticRosterImportError as AutoImportValidationError,
+  importedAttendanceShiftCode,
+  prepareAutomaticRoster,
+} from "../lib/automaticRosterImport";
 
 const router: IRouter = Router();
 const upload = multer({
@@ -86,6 +93,10 @@ const emptyMapping: ImportMapping = {
   shiftCodeColumn: null,
   worksheetName: null,
 };
+
+function distinct<T>(values: T[]): T[] {
+  return [...new Set(values)];
+}
 
 type StoredPreview = Pick<
   ImportPreview,
@@ -438,6 +449,738 @@ async function findVersionResponse(
     assignmentCount: Number(assignmentCount.count),
   };
 }
+
+function qatarFallbackMonth(): string {
+  const parts = new Intl.DateTimeFormat("en", {
+    timeZone: "Asia/Qatar",
+    year: "numeric",
+    month: "2-digit",
+  }).formatToParts(new Date());
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  if (!year || !month) throw new Error("Could not determine the Qatar calendar month.");
+  return `${year}-${month}`;
+}
+
+function storedAutoImportMetrics(job: typeof importJobsTable.$inferSelect) {
+  const preview = job.preview as Record<string, unknown>;
+  const metrics =
+    preview.metrics && typeof preview.metrics === "object"
+      ? (preview.metrics as Record<string, unknown>)
+      : {};
+  const departmentCounts = Array.isArray(metrics.departmentCounts)
+    ? metrics.departmentCounts
+    : [];
+  const warnings = Array.isArray(preview.warnings)
+    ? preview.warnings.filter((value): value is string => typeof value === "string")
+    : [];
+  return {
+    employeeCount: typeof metrics.employeeCount === "number" ? metrics.employeeCount : 0,
+    newEmployeeCount:
+      typeof metrics.newEmployeeCount === "number" ? metrics.newEmployeeCount : 0,
+    dateCount: typeof metrics.dateCount === "number" ? metrics.dateCount : 0,
+    assignmentCount:
+      typeof metrics.assignmentCount === "number" ? metrics.assignmentCount : job.rowCount,
+    departmentCounts,
+    warnings,
+  };
+}
+
+router.post(
+  "/roster-imports/automatic",
+  requireAdmin,
+  uploadWorkbook,
+  async (req, res): Promise<void> => {
+    if (!req.file) {
+      res.status(400).json({
+        error: "Choose an .xlsx workbook to upload.",
+        code: "invalid_upload",
+      });
+      return;
+    }
+    if (!req.file.originalname.toLowerCase().endsWith(".xlsx")) {
+      res.status(415).json({
+        error: "Only .xlsx workbooks are supported.",
+        code: "unsupported_file_type",
+      });
+      return;
+    }
+
+    const fingerprint = createHash("sha256").update(req.file.buffer).digest("hex");
+    let parsed: Awaited<ReturnType<typeof parseRosterWorkbook>>;
+    try {
+      const references = await databaseRosterPreviewRepository.loadReferenceData();
+      parsed = await parseRosterWorkbook(
+        req.file.buffer,
+        qatarFallbackMonth(),
+        emptyMapping,
+        references.employees,
+        references.shiftTypes,
+        references.departments,
+      );
+    } catch (error) {
+      req.log.warn({ err: error }, "Could not parse automatic roster upload");
+      res.status(422).json({
+        error:
+          "The workbook could not be read as a roster. The existing published schedule was not changed.",
+        code: "invalid_workbook",
+      });
+      return;
+    }
+
+    const user = currentAppUser(req);
+    try {
+      const result = await db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext('aman-auto-roster-import'))`);
+        const [duplicateJob] = await tx
+          .select()
+          .from(importJobsTable)
+          .where(
+            and(
+              eq(importJobsTable.status, "committed"),
+              sql`${importJobsTable.preview}->>'uploadFingerprint' = ${fingerprint}`,
+            ),
+          )
+          .limit(1);
+        if (duplicateJob?.createdVersionId) {
+          const [duplicateVersion] = await tx
+            .select()
+            .from(rosterVersionsTable)
+            .where(eq(rosterVersionsTable.id, duplicateJob.createdVersionId))
+            .limit(1);
+          if (duplicateVersion) {
+            return {
+              job: duplicateJob,
+              version: duplicateVersion,
+              metrics: storedAutoImportMetrics(duplicateJob),
+              alreadyImported: true,
+            };
+          }
+        }
+
+        const [employeeRows, aliasRows, departmentRows, shiftRows] =
+          await Promise.all([
+            tx
+              .select({
+                id: employeesTable.id,
+                employeeCode: employeesTable.employeeCode,
+                fullName: employeesTable.fullName,
+                jobTitle: employeesTable.jobTitle,
+                departmentId: employeesTable.departmentId,
+                active: employeesTable.active,
+              })
+              .from(employeesTable),
+            tx
+              .select({
+                employeeId: employeeAliasesTable.employeeId,
+                alias: employeeAliasesTable.alias,
+              })
+              .from(employeeAliasesTable),
+            tx
+              .select({
+                id: departmentsTable.id,
+                code: departmentsTable.code,
+                name: departmentsTable.name,
+                active: departmentsTable.active,
+              })
+              .from(departmentsTable),
+            tx
+              .select({
+                id: shiftTypesTable.id,
+                code: shiftTypesTable.code,
+                name: shiftTypesTable.name,
+                meaning: shiftTypesTable.meaning,
+                category: shiftTypesTable.category,
+                color: shiftTypesTable.color,
+                displayCode: shiftTypesTable.displayCode,
+                displayInCalendar: shiftTypesTable.displayInCalendar,
+                startsAt: shiftTypesTable.startsAt,
+                endsAt: shiftTypesTable.endsAt,
+                active: shiftTypesTable.active,
+              })
+              .from(shiftTypesTable),
+          ]);
+        const aliasesByEmployee = new Map<string, string[]>();
+        for (const alias of aliasRows) {
+          const aliases = aliasesByEmployee.get(alias.employeeId) ?? [];
+          aliases.push(alias.alias);
+          aliasesByEmployee.set(alias.employeeId, aliases);
+        }
+        const plan = prepareAutomaticRoster(parsed, {
+          employees: employeeRows.map((employee) => ({
+            ...employee,
+            aliases: aliasesByEmployee.get(employee.id) ?? [],
+          })),
+          departments: departmentRows,
+          shiftTypes: shiftRows,
+        });
+
+        const departmentIdByKey = new Map<string, string>();
+        for (const department of plan.departments) {
+          if (department.existingId) {
+            departmentIdByKey.set(department.key, department.existingId);
+            const existing = departmentRows.find((item) => item.id === department.existingId);
+            if (existing && !existing.active) {
+              await tx
+                .update(departmentsTable)
+                .set({ active: true, updatedAt: new Date() })
+                .where(eq(departmentsTable.id, existing.id));
+            }
+            continue;
+          }
+          const [created] = await tx
+            .insert(departmentsTable)
+            .values({
+              code: department.code,
+              name: department.name,
+              timezone: "Asia/Qatar",
+              active: true,
+            })
+            .returning({ id: departmentsTable.id });
+          departmentIdByKey.set(department.key, created.id);
+        }
+
+        const employeeIdByKey = new Map<string, string>();
+        const createdEmployeeIds = new Set<string>();
+        for (const employee of plan.employees) {
+          const departmentId = departmentIdByKey.get(employee.departmentKey);
+          if (!departmentId) {
+            throw new AutoImportValidationError(
+              `No department could be saved for "${employee.fullName}".`,
+              "department_conflict",
+            );
+          }
+          if (employee.existingId) {
+            employeeIdByKey.set(employee.key, employee.existingId);
+            const existing = employeeRows.find((item) => item.id === employee.existingId);
+            if (
+              existing &&
+              (!existing.active || existing.departmentId !== departmentId)
+            ) {
+              await tx
+                .update(employeesTable)
+                .set({
+                  departmentId,
+                  active: true,
+                  updatedAt: new Date(),
+                })
+                .where(eq(employeesTable.id, existing.id));
+            }
+            continue;
+          }
+          const [created] = await tx
+            .insert(employeesTable)
+            .values({
+              employeeCode: employee.employeeCode,
+              fullName: employee.fullName,
+              jobTitle: employee.jobTitle,
+              departmentId,
+              active: true,
+            })
+            .returning({ id: employeesTable.id });
+          employeeIdByKey.set(employee.key, created.id);
+          createdEmployeeIds.add(created.id);
+        }
+
+        const aliasNames = distinct(plan.aliases.map((item) => normalizeEmployeeName(item.alias)));
+        const existingAliases = aliasNames.length
+          ? await tx
+              .select({
+                normalizedAlias: employeeAliasesTable.normalizedAlias,
+                employeeId: employeeAliasesTable.employeeId,
+              })
+              .from(employeeAliasesTable)
+              .where(inArray(employeeAliasesTable.normalizedAlias, aliasNames))
+          : [];
+        const canonicalNameRows = aliasNames.length
+          ? await tx
+              .select({
+                id: employeesTable.id,
+                fullName: employeesTable.fullName,
+              })
+              .from(employeesTable)
+          : [];
+        for (const alias of plan.aliases) {
+          const normalizedAlias = normalizeEmployeeName(alias.alias);
+          const employeeId = employeeIdByKey.get(alias.employeeKey);
+          if (!normalizedAlias || !employeeId) continue;
+          const existingAlias = existingAliases.find(
+            (candidate) => candidate.normalizedAlias === normalizedAlias,
+          );
+          if (existingAlias) {
+            if (existingAlias.employeeId !== employeeId) {
+              throw new AutoImportValidationError(
+                `The name "${alias.alias}" is already linked to a different employee.`,
+                "ambiguous_employee",
+              );
+            }
+            continue;
+          }
+          const canonicalConflict = canonicalNameRows.find(
+            (candidate) =>
+              candidate.id !== employeeId &&
+              normalizeEmployeeName(candidate.fullName) === normalizedAlias,
+          );
+          if (canonicalConflict) {
+            throw new AutoImportValidationError(
+              `The name "${alias.alias}" matches another employee.`,
+              "ambiguous_employee",
+            );
+          }
+          await tx.insert(employeeAliasesTable).values({
+            employeeId,
+            alias: alias.alias,
+            normalizedAlias,
+            createdBy: user.id,
+          });
+        }
+
+        const shiftTypeById = new Map(shiftRows.map((shift) => [shift.id, shift]));
+        let blankShiftType = shiftRows.find(
+          (shift) => shift.code.trim().toUpperCase() === "BLANK",
+        );
+        if (
+          !blankShiftType &&
+          plan.assignments.some(
+            (assignment) =>
+              assignment.normalizedShiftCode === "BLANK" &&
+              !assignment.knownShiftTypeId,
+          )
+        ) {
+          const [created] = await tx
+            .insert(shiftTypesTable)
+            .values({
+              code: "BLANK",
+              category: "attendance",
+              name: "Blank cell",
+              meaning: "Empty workbook cell; not a day off.",
+              color: "#78909C",
+              displayCode: "",
+              displayInCalendar: false,
+              active: true,
+              startsAt: null,
+              endsAt: null,
+            })
+            .returning();
+          blankShiftType = created;
+          shiftTypeById.set(created.id, created);
+        }
+        const unknownCodes = [...plan.unknownShiftCounts.keys()];
+        const unknownTypeCodes = unknownCodes.map(importedAttendanceShiftCode);
+        const importedTypes = unknownTypeCodes.length
+          ? await tx
+              .select()
+              .from(shiftTypesTable)
+              .where(inArray(shiftTypesTable.code, unknownTypeCodes))
+          : [];
+        const importedTypeByCode = new Map(
+          importedTypes.map((shift) => [shift.code, shift]),
+        );
+        for (const code of unknownCodes) {
+          const typeCode = importedAttendanceShiftCode(code);
+          let shift = importedTypeByCode.get(typeCode);
+          if (!shift) {
+            const [created] = await tx
+              .insert(shiftTypesTable)
+              .values({
+                code: typeCode,
+                category: "attendance",
+                name: `Unrecognized status ${code}`,
+                meaning: "Automatically preserved from a roster; review this status.",
+                color: "#78909C",
+                displayCode: code,
+                displayInCalendar: true,
+                active: true,
+                startsAt: null,
+                endsAt: null,
+              })
+              .returning();
+            shift = created;
+            importedTypeByCode.set(typeCode, created);
+          } else if (!shift.active || shift.category !== "attendance") {
+            throw new AutoImportValidationError(
+              `Unknown status "${code}" conflicts with an existing shift type. No schedule changes were saved.`,
+              "invalid_roster",
+            );
+          }
+          shiftTypeById.set(shift.id, shift);
+        }
+        for (const planned of plan.assignments) {
+          if (planned.knownShiftTypeId) {
+            const knownShift = shiftTypeById.get(planned.knownShiftTypeId);
+            if (knownShift && !knownShift.active) {
+              await tx
+                .update(shiftTypesTable)
+                .set({ active: true, updatedAt: new Date() })
+                .where(eq(shiftTypesTable.id, knownShift.id));
+              knownShift.active = true;
+            }
+          }
+        }
+
+        const incomingAssignments = plan.assignments.map((planned) => {
+          const employeeId = employeeIdByKey.get(planned.employeeKey);
+          const departmentId = departmentIdByKey.get(planned.departmentKey);
+          const shiftTypeId =
+            planned.knownShiftTypeId ??
+            (planned.normalizedShiftCode === "BLANK" ? blankShiftType?.id : undefined) ??
+            importedTypeByCode.get(
+              importedAttendanceShiftCode(planned.normalizedShiftCode),
+            )?.id;
+          if (!employeeId || !departmentId || !shiftTypeId) {
+            throw new AutoImportValidationError(
+              "The workbook contains an assignment that could not be resolved. No schedule changes were saved.",
+              "invalid_roster",
+            );
+          }
+          const assignmentShift = shiftTypeById.get(shiftTypeId) ??
+            importedTypeByCode.get(importedAttendanceShiftCode(planned.normalizedShiftCode));
+          if (!assignmentShift) {
+            throw new AutoImportValidationError(
+              "A shift type could not be saved for one of the workbook codes.",
+              "invalid_roster",
+            );
+          }
+          return {
+            planned,
+            employeeId,
+            departmentId,
+            shiftTypeId,
+            assignmentShift,
+          };
+        });
+        const finalAssignmentKeys = new Set<string>();
+        for (const incoming of incomingAssignments) {
+          const key = `${incoming.employeeId}:${incoming.planned.record.date}`;
+          if (finalAssignmentKeys.has(key)) {
+            throw new AutoImportValidationError(
+              `The workbook contains more than one assignment for an employee on ${incoming.planned.record.date}.`,
+              "invalid_roster",
+            );
+          }
+          finalAssignmentKeys.add(key);
+        }
+
+        const month = plan.periodStart.slice(0, 7);
+        const activeVersions = await tx
+          .select()
+          .from(rosterVersionsTable)
+          .where(inArray(rosterVersionsTable.status, ["draft", "published"]));
+        const overlappingVersions = activeVersions
+          .filter((version) =>
+            periodsOverlap(
+              { start: plan.periodStart, end: plan.periodEnd },
+              periodForVersion(version),
+            ),
+          )
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+        const overlappingPublished = overlappingVersions.filter(
+          (version) => version.status === "published",
+        );
+        const unionStart = [
+          plan.periodStart,
+          ...overlappingPublished.map((version) => periodForVersion(version).start),
+        ].sort()[0]!;
+        const unionEnd = [
+          plan.periodEnd,
+          ...overlappingPublished.map((version) => periodForVersion(version).end),
+        ].sort().at(-1)!;
+        const publishedIds = overlappingPublished.map((version) => version.id);
+        const carryover = new Map<
+          string,
+          {
+            employeeId: string;
+            shiftTypeId: string;
+            date: string;
+            sourceEmployeeId: string | null;
+            sourceEmployeeName: string | null;
+            sourceDepartment: string | null;
+            sourceRole: string | null;
+            sourceRawShiftValue: string | null;
+            notes: string | null;
+          }
+        >();
+        if (publishedIds.length) {
+          const oldAssignments = await tx
+            .select({
+              versionId: shiftAssignmentsTable.versionId,
+              employeeId: shiftAssignmentsTable.employeeId,
+              shiftTypeId: shiftAssignmentsTable.shiftTypeId,
+              date: shiftAssignmentsTable.date,
+              sourceEmployeeId: shiftAssignmentsTable.sourceEmployeeId,
+              sourceEmployeeName: shiftAssignmentsTable.sourceEmployeeName,
+              sourceDepartment: shiftAssignmentsTable.sourceDepartment,
+              sourceRole: shiftAssignmentsTable.sourceRole,
+              sourceRawShiftValue: shiftAssignmentsTable.sourceRawShiftValue,
+              notes: shiftAssignmentsTable.notes,
+            })
+            .from(shiftAssignmentsTable)
+            .where(inArray(shiftAssignmentsTable.versionId, publishedIds));
+          const rank = new Map(
+            overlappingPublished.map((version, index) => [version.id, index]),
+          );
+          oldAssignments.sort(
+            (a, b) => (rank.get(a.versionId) ?? 0) - (rank.get(b.versionId) ?? 0),
+          );
+          for (const assignment of oldAssignments) {
+            if (
+              assignment.date >= plan.periodStart &&
+              assignment.date <= plan.periodEnd
+            ) {
+              continue;
+            }
+            const key = `${assignment.employeeId}:${assignment.date}`;
+            if (carryover.has(key)) continue;
+            carryover.set(key, {
+              employeeId: assignment.employeeId,
+              shiftTypeId: assignment.shiftTypeId,
+              date: assignment.date,
+              sourceEmployeeId: assignment.sourceEmployeeId,
+              sourceEmployeeName: assignment.sourceEmployeeName,
+              sourceDepartment: assignment.sourceDepartment,
+              sourceRole: assignment.sourceRole,
+              sourceRawShiftValue: assignment.sourceRawShiftValue,
+              notes: assignment.notes,
+            });
+          }
+        }
+
+        const warningMessages: string[] = [];
+        for (const [code, cells] of plan.unknownShiftCounts) {
+          warningMessages.push(
+            `Unrecognized status "${code}" was saved as non-working attendance in ${cells} cell${cells === 1 ? "" : "s"}.`,
+          );
+        }
+        const noIdCount = plan.employees.filter((employee) => !employee.sourceEmployeeId).length;
+        if (noIdCount) {
+          warningMessages.push(
+            `${noIdCount} employee${noIdCount === 1 ? "" : "s"} without a source Employee ID were matched by unique name or assigned a stable internal ID.`,
+          );
+        }
+        const newDepartmentCount = plan.departments.filter(
+          (department) => !department.existingId,
+        ).length;
+        if (newDepartmentCount) {
+          warningMessages.push(
+            `${newDepartmentCount} department${newDepartmentCount === 1 ? "" : "s"} were created from unambiguous workbook section labels.`,
+          );
+        }
+
+        const departmentCounts = plan.departments
+          .map((department) => ({
+            departmentCode: department.code,
+            departmentName: department.name,
+            employeeCount: plan.employees.filter(
+              (employee) => employee.departmentKey === department.key,
+            ).length,
+          }))
+          .filter((department) => department.employeeCount > 0)
+          .sort((a, b) => a.departmentCode.localeCompare(b.departmentCode));
+        const warningsForStorage = plan.assignments.flatMap((planned) =>
+          plan.unknownShiftCounts.has(planned.normalizedShiftCode)
+            ? [{
+                code: "unknown_shift",
+                message: `The unrecognized status "${planned.normalizedShiftCode}" was saved as attendance.`,
+                rowNumber: planned.record.rowNumber,
+                value: planned.record.rawShiftValue.trim() || null,
+              }]
+            : [],
+        );
+        const uniqueWarnings = [
+          ...new Map(
+            warningsForStorage.map((warning) => [
+              `${warning.code}:${warning.value ?? ""}`,
+              warning,
+            ]),
+          ).values(),
+        ];
+        const [maxVersion] = await tx
+          .select({ number: rosterVersionsTable.versionNumber })
+          .from(rosterVersionsTable)
+          .where(eq(rosterVersionsTable.month, month))
+          .orderBy(desc(rosterVersionsTable.versionNumber))
+          .limit(1);
+
+        const stagedRecords = incomingAssignments.map((incoming) => {
+          const employee = plan.employees.find(
+            (candidate) => candidate.key === incoming.planned.employeeKey,
+          )!;
+          const assignmentShift = incoming.assignmentShift;
+          return {
+            ...incoming.planned.record,
+            employeeId: incoming.employeeId,
+            employeeCode: employee.employeeCode,
+            employeeName: employee.fullName,
+            departmentId: incoming.departmentId,
+            shiftTypeId: incoming.shiftTypeId,
+            shiftCode: assignmentShift.displayCode ?? assignmentShift.code,
+            shiftName: assignmentShift.name,
+            valid: true,
+          };
+        });
+        const [job] = await tx
+          .insert(importJobsTable)
+          .values({
+            month,
+            periodStart: plan.periodStart,
+            periodEnd: plan.periodEnd,
+            selectedWorksheet: plan.selectedWorksheet,
+            status: "committed",
+            detectedFormat: parsed.format,
+            uploadedBy: user.id,
+            rowCount: plan.assignments.length,
+            validCount: plan.assignments.length,
+            issueCount: warningMessages.length,
+            mapping: { ...parsed.mapping },
+            preview: {
+              columns: parsed.columns,
+              records: stagedRecords,
+              issues: uniqueWarnings,
+              periodStart: plan.periodStart,
+              periodEnd: plan.periodEnd,
+              selectedWorksheet: plan.selectedWorksheet,
+              worksheetChoices: parsed.worksheetChoices,
+              uploadFingerprint: fingerprint,
+              warnings: warningMessages,
+              metrics: {
+                employeeCount: plan.employees.length,
+                newEmployeeCount: createdEmployeeIds.size,
+                dateCount: plan.dates.length,
+                assignmentCount: plan.assignments.length,
+                departmentCounts,
+              },
+            },
+          })
+          .returning();
+        const [version] = await tx
+          .insert(rosterVersionsTable)
+          .values({
+            month,
+            periodStart: unionStart,
+            periodEnd: unionEnd,
+            versionNumber: (maxVersion?.number ?? 0) + 1,
+            status: "published",
+            sourceImportId: job.id,
+            createdBy: user.id,
+            publishedAt: new Date(),
+            publishedBy: user.id,
+          })
+          .returning();
+
+        const finalAssignments = [
+          ...carryover.values(),
+          ...incomingAssignments.map((assignment) => ({
+            employeeId: assignment.employeeId,
+            shiftTypeId: assignment.shiftTypeId,
+            date: assignment.planned.record.date!,
+            sourceEmployeeId: assignment.planned.record.sourceEmployeeId,
+            sourceEmployeeName: assignment.planned.record.sourceEmployeeName,
+            sourceDepartment:
+              assignment.planned.record.sourceDepartment ||
+              plan.departments.find(
+                (department) => department.key === assignment.planned.departmentKey,
+              )?.code ||
+              null,
+            sourceRole: assignment.planned.record.sourceRole,
+            sourceRawShiftValue: assignment.planned.record.rawShiftValue,
+            notes: null,
+          })),
+        ];
+        if (finalAssignments.length) {
+          await tx
+            .insert(shiftAssignmentsTable)
+            .values(
+              finalAssignments.map((assignment) => ({
+                ...assignment,
+                versionId: version.id,
+              })),
+            );
+        }
+        if (overlappingVersions.length) {
+          await tx
+            .update(rosterVersionsTable)
+            .set({ status: "archived" })
+            .where(
+              inArray(
+                rosterVersionsTable.id,
+                overlappingVersions.map((candidate) => candidate.id),
+              ),
+            );
+        }
+        await tx
+          .update(importJobsTable)
+          .set({ createdVersionId: version.id })
+          .where(eq(importJobsTable.id, job.id));
+        await tx.insert(auditLogsTable).values({
+          actorUserId: user.id,
+          action: "roster.import_auto_published",
+          subject: `${plan.periodStart}–${plan.periodEnd} · v${version.versionNumber}`,
+          details: {
+            employeeCount: plan.employees.length,
+            newEmployeeCount: createdEmployeeIds.size,
+            dateCount: plan.dates.length,
+            assignmentCount: plan.assignments.length,
+            warningCount: warningMessages.length,
+            alreadyImported: false,
+          },
+        });
+        const [savedJob] = await tx
+          .select()
+          .from(importJobsTable)
+          .where(eq(importJobsTable.id, job.id))
+          .limit(1);
+        return {
+          job: savedJob,
+          version,
+          metrics: {
+            employeeCount: plan.employees.length,
+            newEmployeeCount: createdEmployeeIds.size,
+            dateCount: plan.dates.length,
+            assignmentCount: plan.assignments.length,
+            departmentCounts,
+            warnings: warningMessages,
+          },
+          alreadyImported: false,
+        };
+      });
+      res
+        .status(result.alreadyImported ? 200 : 201)
+        .json(
+          AutomaticRosterImportResponse.parse({
+            import: await importResponse(result.job, user.fullName),
+            version: await findVersionResponse(result.version),
+            ...result.metrics,
+            alreadyImported: result.alreadyImported,
+          }),
+        );
+    } catch (error) {
+      if (error instanceof AutoImportValidationError) {
+        const status =
+          error.code === "employee_id_conflict" ? 409 : 422;
+        res.status(status).json({ error: error.message, code: error.code });
+        return;
+      }
+      const errorCode =
+        error && typeof error === "object"
+          ? (error as { code?: unknown }).code
+          : undefined;
+      if (errorCode === "23505") {
+        res.status(409).json({
+          error:
+            "This workbook conflicts with an existing employee or roster record. No schedule changes were saved.",
+          code: "import_conflict",
+        });
+        return;
+      }
+      req.log.error({ err: error }, "Automatic roster import failed");
+      res.status(500).json({
+        error:
+          "The roster could not be saved. The existing published schedule was left unchanged.",
+        code: "automatic_import_failed",
+      });
+    }
+  },
+);
 
 router.get(
   "/roster-imports",

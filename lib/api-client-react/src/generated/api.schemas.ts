@@ -476,6 +476,58 @@ export interface RosterImportPreviewInput {
   mappingJson?: string;
 }
 
+export interface AutomaticRosterImportInput {
+  file: Blob | File;
+}
+
+export type AutomaticRosterImportResultDepartmentCountsItem = {
+  departmentCode: string;
+  departmentName: string;
+  employeeCount: number;
+};
+
+export type RosterVersionStatus = typeof RosterVersionStatus[keyof typeof RosterVersionStatus];
+
+
+export const RosterVersionStatus = {
+  draft: 'draft',
+  published: 'published',
+  archived: 'archived',
+} as const;
+
+export interface RosterVersion {
+  id: string;
+  month: string;
+  periodStart: string;
+  periodEnd: string;
+  versionNumber: number;
+  status: RosterVersionStatus;
+  /** @nullable */
+  sourceImportId: string | null;
+  createdByName: string;
+  createdAt: string;
+  /** @nullable */
+  publishedAt: string | null;
+  assignmentCount: number;
+}
+
+export interface AutomaticRosterImportResult {
+  import: RosterImport;
+  version: RosterVersion;
+  employeeCount: number;
+  newEmployeeCount: number;
+  dateCount: number;
+  assignmentCount: number;
+  departmentCounts: AutomaticRosterImportResultDepartmentCountsItem[];
+  warnings: string[];
+  alreadyImported: boolean;
+}
+
+export interface AutomaticRosterImportError {
+  error: string;
+  code: string;
+}
+
 export interface EmployeeResolution {
   /** @minimum 1 */
   rowNumber: number;
@@ -516,31 +568,6 @@ export const ConfirmRosterImportInputMode = {
 export interface ConfirmRosterImportInput {
   mode: ConfirmRosterImportInputMode;
   publish: boolean;
-}
-
-export type RosterVersionStatus = typeof RosterVersionStatus[keyof typeof RosterVersionStatus];
-
-
-export const RosterVersionStatus = {
-  draft: 'draft',
-  published: 'published',
-  archived: 'archived',
-} as const;
-
-export interface RosterVersion {
-  id: string;
-  month: string;
-  periodStart: string;
-  periodEnd: string;
-  versionNumber: number;
-  status: RosterVersionStatus;
-  /** @nullable */
-  sourceImportId: string | null;
-  createdByName: string;
-  createdAt: string;
-  /** @nullable */
-  publishedAt: string | null;
-  assignmentCount: number;
 }
 
 export interface CreateRosterVersionInput {

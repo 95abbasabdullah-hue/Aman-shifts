@@ -15,6 +15,10 @@ import {
   stripShiftPatternAnnotation,
   validateNewEmployeeRegistrations,
 } from "./employeeIdentity";
+import {
+  prepareAutomaticRoster,
+  type AutoImportReferenceData,
+} from "./automaticRosterImport";
 
 const departments: DepartmentReference[] = [
   { id: "dept-ed", code: "ED", name: "Emergency Department" },
@@ -500,6 +504,57 @@ test("long-format sheets also select the newest actual date period", async () =>
 });
 
 test(
+  "automatic roster planning keeps every cell, creates missing departments, and preserves unknown values",
+  async () => {
+    const fixture = await buildFixture({ unknownCode: true });
+    const employeeReferences = fixture.employees
+      .filter((employee) => employee.employeeCode !== "DIRECTORY-ONLY-17")
+      .map((employee) => ({
+        ...employee,
+        jobTitle: "Registered Nurse",
+        active: true,
+        aliases: [],
+      }));
+    const references: AutoImportReferenceData = {
+      employees: employeeReferences,
+      departments: departments
+        .filter((department) => department.code !== "HCA")
+        .map((department) => ({ ...department, active: true })),
+      shiftTypes: DEFAULT_SHIFT_DEFINITIONS.map((shift) => ({
+        ...shift,
+        active: true,
+      })),
+    };
+    const parsed = await parseRosterWorkbook(
+      fixture.buffer,
+      "2026-11",
+      emptyMapping,
+      employeeReferences,
+      references.shiftTypes,
+      references.departments,
+    );
+    const plan = prepareAutomaticRoster(parsed, references);
+    assert.equal(plan.employees.length, 20);
+    assert.equal(plan.dates.length, 30);
+    assert.equal(plan.assignments.length, 600);
+    assert.deepEqual(plan.assignments.find((item) => item.record.rawShiftValue === "D*")?.normalizedShiftCode, "D");
+    assert.deepEqual(plan.assignments.find((item) => item.record.rawShiftValue === "N*")?.normalizedShiftCode, "N");
+    assert.equal(plan.unknownShiftCounts.get("UNMAPPED"), 1);
+    assert.ok(plan.departments.some((department) => department.code === "HCA" && !department.existingId));
+    const noIdEmployee = plan.employees.find((employee) => !employee.sourceEmployeeId);
+    assert.ok(noIdEmployee?.employeeCode.startsWith("AUTO-"));
+    assert.equal(noIdEmployee?.existingId, null);
+    assert.ok(
+      plan.assignments.some(
+        (assignment) =>
+          assignment.record.rawShiftValue === "UNMAPPED" &&
+          assignment.normalizedShiftCode === "UNMAPPED",
+      ),
+    );
+  },
+);
+
+test(
   "uploaded ED-ICU workbook preserves all 600 source cells",
   { skip: !actualWorkbookPath },
   async () => {
@@ -573,6 +628,24 @@ test(
       ),
       { ED: 13, ICU: 6, HCA: 1 },
     );
+    const parsedWithoutHcaConfigured = await parseRosterWorkbook(
+      sourceBuffer,
+      "2026-11",
+      emptyMapping,
+      sourceEmployees,
+      shiftTypes,
+      departments.filter((department) => department.code !== "HCA"),
+    );
+    assert.equal(parsedWithoutHcaConfigured.records.length, 600);
+    assert.equal(
+      new Set(
+        parsedWithoutHcaConfigured.records
+          .filter((record) => record.sourceDepartment === "HCA")
+          .map((record) => record.rowNumber),
+      ).size,
+      1,
+    );
+    assert.ok(!parsedWithoutHcaConfigured.records.some((record) => record.rowNumber === 33));
 
     const expectedRawCounts = new Map<string, number>();
     const normalizedCounts = new Map<string, number>();

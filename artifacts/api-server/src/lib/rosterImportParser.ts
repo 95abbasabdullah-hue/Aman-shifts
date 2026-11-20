@@ -938,13 +938,23 @@ export async function parseRosterWorkbook(
     }
 
     const isDepartmentLabel = matchDepartment(sourceEmployeeName, departments);
-    const recognizedShiftCount = selectedCandidate.dateColumns.filter(({ column }) => {
-      const rawShiftValue = rawCellText(row.getCell(column).value);
-      if (!rawShiftValue.trim()) return false;
-      const shiftCode = normalizeShiftValue(rawShiftValue);
-      return shiftByCode.has(normalize(shiftCode));
-    }).length;
-    const hasRosterValues = recognizedShiftCount >= 2;
+    const shiftCellValues = selectedCandidate.dateColumns.map(({ column }) =>
+      rawCellText(row.getCell(column).value).trim(),
+    );
+    const hasRosterValues = shiftCellValues.filter(Boolean).length >= 2;
+    const isUnconfiguredSectionLabel = Boolean(
+      !hasSourceEmployeeId &&
+        !roleValue.trim() &&
+        !employeeByNameMatch &&
+        sourceEmployeeName.trim() === sourceEmployeeName.trim().toUpperCase() &&
+        /^[A-Z0-9][A-Z0-9 _&/-]{1,19}$/.test(sourceEmployeeName.trim()) &&
+        shiftCellValues.every((value) => !value),
+    );
+    if (isUnconfiguredSectionLabel) {
+      currentDepartmentId = isDepartmentLabel?.id ?? null;
+      currentDepartmentSource = sourceEmployeeName.trim();
+      continue;
+    }
     const isEmployeeRow = Boolean(
       (hasSourceEmployeeId || sourceEmployeeName.trim()) &&
         !isDepartmentLabel &&

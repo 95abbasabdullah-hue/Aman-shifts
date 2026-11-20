@@ -29,6 +29,9 @@ import type {
   ApiError,
   AssignmentInput,
   AssignmentUpdate,
+  AutomaticRosterImportError,
+  AutomaticRosterImportInput,
+  AutomaticRosterImportResult,
   ConfirmRosterImportInput,
   CreateRosterVersionInput,
   CurrentUser,
@@ -1742,6 +1745,82 @@ export const usePreviewRosterImport = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getPreviewRosterImportMutationOptions(options), queryClient);
+    }
+
+export const getAutomaticRosterImportUrl = () => {
+
+
+
+
+  return `/api/roster-imports/automatic`
+}
+
+/**
+ * @summary Validate and publish a roster from one workbook upload
+ */
+export const automaticRosterImport = async (automaticRosterImportInput: AutomaticRosterImportInput, options?: Parameters<typeof customFetch>[1]): Promise<AutomaticRosterImportResult> => {
+    const formData = new FormData();
+formData.append(`file`, automaticRosterImportInput.file);
+
+  return customFetch<AutomaticRosterImportResult>(getAutomaticRosterImportUrl(),
+  {
+    ...options,
+    method: 'POST'
+    ,
+    body: formData
+  }
+);}
+
+
+
+
+
+export const getAutomaticRosterImportMutationKey = () => ['automaticRosterImport'] as const;
+
+export const getAutomaticRosterImportMutationOptions = <TError = ErrorType<ApiError | AutomaticRosterImportError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof automaticRosterImport>>, TError,AutomaticRosterImportMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof automaticRosterImport>>, TError,AutomaticRosterImportMutationVariables, TContext> => {
+
+const mutationKey = getAutomaticRosterImportMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof automaticRosterImport>>, AutomaticRosterImportMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  automaticRosterImport(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AutomaticRosterImportMutationResult = NonNullable<Awaited<ReturnType<typeof automaticRosterImport>>>
+    export type AutomaticRosterImportMutationBody = BodyType<AutomaticRosterImportInput>
+    export type AutomaticRosterImportMutationError = ErrorType<ApiError | AutomaticRosterImportError>
+    export type AutomaticRosterImportMutationVariables = {data: BodyType<AutomaticRosterImportInput>}
+
+    /**
+ * @summary Validate and publish a roster from one workbook upload
+ */
+export const useAutomaticRosterImport = <TError = ErrorType<ApiError | AutomaticRosterImportError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof automaticRosterImport>>, TError,AutomaticRosterImportMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof automaticRosterImport>>,
+        TError,
+        AutomaticRosterImportMutationVariables,
+        TContext
+      > => {
+      return useMutation(getAutomaticRosterImportMutationOptions(options), queryClient);
     }
 
 export const getResolveRosterImportUrl = (importId: string,) => {

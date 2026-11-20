@@ -527,6 +527,56 @@ export const PreviewRosterImportResponse = zod.object({
 
 
 /**
+ * @summary Validate and publish a roster from one workbook upload
+ */
+export const AutomaticRosterImportBody = zod.object({
+  "file": zod.instanceof(Blob)
+})
+
+export const AutomaticRosterImportResponse = zod.object({
+  "import": zod.object({
+  "id": zod.string(),
+  "month": zod.string(),
+  "periodStart": zod.string().date().nullable(),
+  "periodEnd": zod.string().date().nullable(),
+  "selectedWorksheet": zod.string().nullable(),
+  "status": zod.enum(['needs_review', 'ready', 'committed', 'rejected']),
+  "uploadedByName": zod.string(),
+  "uploadedAt": zod.string().datetime({"offset":true}),
+  "detectedFormat": zod.enum(['wide', 'long', 'unknown']),
+  "rowCount": zod.number().int(),
+  "validCount": zod.number().int(),
+  "issueCount": zod.number().int(),
+  "createdVersionId": zod.string().nullable()
+}),
+  "version": zod.object({
+  "id": zod.string(),
+  "month": zod.string(),
+  "periodStart": zod.string().date(),
+  "periodEnd": zod.string().date(),
+  "versionNumber": zod.number().int(),
+  "status": zod.enum(['draft', 'published', 'archived']),
+  "sourceImportId": zod.string().nullable(),
+  "createdByName": zod.string(),
+  "createdAt": zod.string().datetime({"offset":true}),
+  "publishedAt": zod.string().datetime({"offset":true}).nullable(),
+  "assignmentCount": zod.number().int()
+}),
+  "employeeCount": zod.number().int(),
+  "newEmployeeCount": zod.number().int(),
+  "dateCount": zod.number().int(),
+  "assignmentCount": zod.number().int(),
+  "departmentCounts": zod.array(zod.object({
+  "departmentCode": zod.string(),
+  "departmentName": zod.string(),
+  "employeeCount": zod.number().int()
+})),
+  "warnings": zod.array(zod.string()),
+  "alreadyImported": zod.boolean()
+})
+
+
+/**
  * @summary Map unmatched employees and shift codes
  */
 export const ResolveRosterImportParams = zod.object({

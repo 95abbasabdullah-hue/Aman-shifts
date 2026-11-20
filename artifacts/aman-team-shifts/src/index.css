@@ -611,12 +611,11 @@ a { color: inherit; text-decoration: none; }
 .shift-card[data-status-code="OFF"] .shift-staff strong { color:#343a37; }
 .shift-card[data-status-code="OFF"] .shift-detail { color:#454b48; }
 .shift-card[data-status-code="OFF"] .shift-code-label { background:#c8cdca; color:#3f4542; }
-.my-shift-list { overflow:hidden; padding:0; }
-.my-shift-item { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:16px; padding:14px 17px; border-bottom:1px solid #e9ece7; border-inline-start:4px solid var(--shift-color); background:color-mix(in srgb,var(--shift-color) 26%,#fff); }
-.my-shift-item:last-child { border-bottom:0; }
-.my-shift-item[data-status-code="OFF"] { border-inline-start-color:#9ea4a0; background:#e0e0e0; }
-.my-shift-item time { color:#354d55; font-size:12px; font-weight:600; }
-.my-shift-status { display:inline-flex; align-items:center; justify-content:center; min-width:50px; color:#334b55; font:700 10px var(--app-font-mono); }
+.my-shift-list { display:grid; gap:12px; overflow:visible; padding:12px; }
+.my-shift-item { box-sizing:border-box; display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:16px; min-height:96px; padding:22px 20px; border:2px solid #111; border-radius:12px; background:color-mix(in srgb,var(--shift-color) 26%,#fff); }
+.my-shift-item[data-status-code="OFF"] { background:#e0e0e0; }
+.my-shift-item time { color:#354d55; font-size:16px; font-weight:600; }
+.my-shift-status { display:inline-flex; align-items:center; justify-content:center; min-width:64px; color:#334b55; font:700 16px var(--app-font-mono); }
 .shift-actions { display:flex; align-items:center; gap:4px; margin-left:8px; }.shift-actions button { border:0; background:#ffffffa8; padding:6px 8px; border-radius:6px; color:#416c75; font-size:9px; font-weight:700; }
 .shift-actions button:hover { background:#fff; }.shift-legend { display:flex; align-items:center; gap:17px; flex-wrap:wrap; margin-top:24px; color:#85918d; font-size:9px; }
 .shift-legend>span { display:flex; align-items:center; gap:6px; }.legend-dot { width:9px;height:9px;border-radius:3px; }.legend-blue { background:#1685c5; }.legend-green { background:#8ebc25; }
@@ -743,7 +742,7 @@ html[dir="rtl"] .auth-back { left:auto; right:36px; }
   .calendar-strip { padding:10px 7px; }.calendar-strip-head,.calendar-date-grid { gap:2px; grid-template-columns:repeat(7,minmax(0,1fr)); }.calendar-strip-head span { font-size:8px; }.calendar-date,.calendar-leading-cell { min-height:34px; }.calendar-date { gap:3px; }.date-count { min-width:13px;height:13px;font-size:7px; }
   .day-heading { margin-top:21px; }.day-heading h2 { font-size:20px; }.shift-row { grid-template-columns:34px minmax(0,1fr); gap:7px; }.staff-avatar { width:32px;height:32px;font-size:8px; }.shift-card { gap:8px; min-height:58px; padding:8px 8px 8px 12px; }.shift-staff strong { font-size:11px; }.shift-staff span { font-size:8px; }.shift-detail { font-size:9px; padding-left:4px; }.shift-actions { flex-direction:column; gap:2px; margin-left:0; }.shift-actions button { padding:5px; font-size:8px; }
   .shift-legend { gap:9px; font-size:8px; }
-  .employee-link-panel { padding:16px; }.employee-link-panel .button { width:100%; }.my-shift-item { gap:10px; padding:12px; }.my-shift-item time { font-size:11px; }
+  .employee-link-panel { padding:16px; }.employee-link-panel .button { width:100%; }.my-shift-list { gap:10px; padding:10px; }.my-shift-item { gap:10px; min-height:88px; padding:18px 14px; border-width:2px; border-radius:10px; }.my-shift-item time { font-size:14px; }.my-shift-status { min-width:56px; font-size:14px; }
   .directory-toolbar { gap:10px; }.search-box { width:62%; }.employee-card { display:grid; grid-template-columns:37px minmax(0,1fr) auto; gap:9px; padding:12px; }.employee-avatar { grid-row:span 2; }.employee-main { min-width:0; }.employee-code { justify-self:end; }.employee-dept { grid-column:2; width:auto; }.employee-status { grid-column:3; grid-row:2; }.row-actions { grid-column:2/4; margin:0; }.row-actions button { padding-left:0; }
   .setup-row,.shift-type-row { gap:9px; padding:11px; }.setup-main { min-width:0; }.setup-count { min-width:40px; }.button-small { padding:0 9px; }.shift-type-row .employee-status { display:none; }
   .import-layout { grid-template-columns:1fr; }.import-aside { grid-row:1; }.import-guidance { padding:15px; }.import-guidance ul { grid-template-columns:1fr 1fr; gap:11px; }.guidance-note { margin-top:14px; }.import-history { display:none; }

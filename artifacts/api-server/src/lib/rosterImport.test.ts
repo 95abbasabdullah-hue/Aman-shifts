@@ -9,6 +9,12 @@ import {
   type ShiftReference,
 } from "./rosterImportParser";
 import { DEFAULT_SHIFT_DEFINITIONS, normalizeShiftValue } from "./shiftDefinitions";
+import {
+  matchEmployeeIdentity,
+  normalizeEmployeeName,
+  stripShiftPatternAnnotation,
+  validateNewEmployeeRegistrations,
+} from "./employeeIdentity";
 
 const departments: DepartmentReference[] = [
   { id: "dept-ed", code: "ED", name: "Emergency Department" },
@@ -140,6 +146,7 @@ const emptyMapping = {
   format: "auto" as const,
   employeeIdColumn: null,
   employeeNameColumn: null,
+  employeeRoleColumn: null,
   departmentColumn: null,
   dateColumn: null,
   shiftCodeColumn: null,
@@ -193,6 +200,86 @@ test("official shift normalization trims aliases and keeps D1 separate", () => {
   );
 });
 
+test("employee resolution prefers exact IDs, then approved aliases, then unique names", () => {
+  const employees: EmployeeReference[] = [
+    {
+      id: "emp-1",
+      employeeCode: "ID001",
+      fullName: "Nurse Alpha",
+      departmentId: "dept-ed",
+      aliases: ["Imported Alpha"],
+    },
+    {
+      id: "emp-2",
+      employeeCode: "ID002",
+      fullName: "Nurse Beta",
+      departmentId: "dept-icu",
+    },
+  ];
+  assert.equal(
+    matchEmployeeIdentity(" ID002 ", "Nurse Alpha", employees).employee?.id,
+    "emp-2",
+  );
+  assert.equal(
+    matchEmployeeIdentity("OLD-ID", "Imported Alpha", employees).method,
+    "approved_alias",
+  );
+  assert.equal(
+    matchEmployeeIdentity("", "Nurse Beta", employees).method,
+    "unique_name",
+  );
+  assert.equal(
+    matchEmployeeIdentity("OLD-ID", "Nurse Beta", employees).employee?.id,
+    "emp-2",
+  );
+  assert.equal(
+    matchEmployeeIdentity("", "Nurse Alpha (D*/N)", employees).employee?.id,
+    "emp-1",
+  );
+  assert.notEqual(
+    normalizeEmployeeName("Nurse Alpha (Extra Name)"),
+    normalizeEmployeeName("Nurse Alpha"),
+  );
+  assert.equal(stripShiftPatternAnnotation("Nurse Alpha (D*/N)"), "Nurse Alpha");
+});
+
+test("ambiguous names stay unresolved and employee registration rejects duplicates", () => {
+  const duplicateNames: EmployeeReference[] = [
+    { id: "emp-1", employeeCode: "ID001", fullName: "Nurse Alpha", departmentId: "dept-ed" },
+    { id: "emp-2", employeeCode: "ID002", fullName: "Nurse Alpha", departmentId: "dept-icu" },
+  ];
+  const ambiguous = matchEmployeeIdentity("", "Nurse Alpha", duplicateNames);
+  assert.equal(ambiguous.employee, null);
+  assert.equal(ambiguous.method, "ambiguous_name");
+
+  const valid = validateNewEmployeeRegistrations(
+    [{ rowNumber: 4, employeeCode: "ID003", fullName: "Nurse Gamma", jobTitle: "RN", departmentId: "dept-ed" }],
+    duplicateNames,
+  );
+  assert.equal(valid.valid, true);
+  assert.equal(
+    validateNewEmployeeRegistrations(
+      [{ rowNumber: 4, employeeCode: "ID001", fullName: "Nurse Gamma", jobTitle: "RN", departmentId: "dept-ed" }],
+      duplicateNames,
+    ).valid,
+    false,
+  );
+  assert.equal(
+    validateNewEmployeeRegistrations(
+      [{ rowNumber: 4, employeeCode: "ID003", fullName: "Nurse Alpha", jobTitle: "RN", departmentId: "dept-ed" }],
+      duplicateNames,
+    ).valid,
+    false,
+  );
+  assert.equal(
+    validateNewEmployeeRegistrations(
+      [{ rowNumber: 4, employeeCode: "", fullName: "Nurse Gamma", jobTitle: "RN", departmentId: "dept-ed" }],
+      [],
+    ).valid,
+    false,
+  );
+});
+
 test("raw Excel text is retained while surrounding spaces are normalized", async () => {
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("Current roster");
@@ -203,8 +290,8 @@ test("raw Excel text is retained while surrounding spaces are normalized", async
     sheet.getCell(5, 5 + index).value = new Date(Date.UTC(2026, 10, 20 + index));
   }
   sheet.getCell("B6").value = "Nurse Sample";
-  sheet.getCell("C6").value = "ID001";
-  sheet.getCell("D6").value = "RN";
+  sheet.getCell("C6").value = " ID001 ";
+  sheet.getCell("D6").value = "RN - ED";
   sheet.getCell("E6").value = " D* ";
   sheet.getCell("F6").value = "N*";
   sheet.getCell("G6").value = "M";
@@ -224,6 +311,16 @@ test("raw Excel text is retained while surrounding spaces are normalized", async
   );
   assert.deepEqual(parsed.records.map((record) => record.rawShiftValue), [" D* ", "N*", "M"]);
   assert.deepEqual(parsed.records.map((record) => record.shiftCode), ["D", "N", "M"]);
+  assert.equal(parsed.records[0].sourceEmployeeId, " ID001 ");
+  assert.equal(parsed.records[0].sourceRole, "RN - ED");
+  assert.equal(parsed.records[0].sourceDepartment, "ED");
+  assert.equal(parsed.mapping.employeeNameColumn, "B");
+  assert.equal(parsed.mapping.employeeIdColumn, "C");
+  assert.equal(parsed.mapping.employeeRoleColumn, "D");
+  assert.equal(parsed.mapping.dateColumn, null);
+  assert.equal(parsed.mapping.shiftCodeColumn, null);
+  assert.ok(parsed.columns.includes("B"));
+  assert.ok(!parsed.columns.includes("GREGORIAN DATE"));
 });
 
 test("latest date range wins and preserves a cross-month 20 by 30 grid", async () => {
@@ -328,10 +425,16 @@ test("unknown codes warn without aborting, and attendance remains non-working", 
   );
   assert.equal(parsed.records.length, 600);
   assert.ok(parsed.issues.some((issue) => issue.code === "unknown_shift" && issue.value === "UNMAPPED"));
-  assert.equal(
-    shiftTypes.find((shift) => shift.code === "AL")?.category,
-    "attendance",
-  );
+  for (const code of ["AL", "CL", "EL", "R", "OFF", "/", "BLANK"]) {
+    assert.equal(
+      shiftTypes.find((shift) => shift.code === code)?.category,
+      "attendance",
+      `${code} remains a non-working attendance status`,
+    );
+  }
+  assert.equal(normalizeShiftValue("/"), "/");
+  assert.equal(normalizeShiftValue(""), "BLANK");
+  assert.notEqual(normalizeShiftValue("/"), normalizeShiftValue("OFF"));
   assert.equal(
     shiftTypes.find((shift) => shift.code === "D1")?.category,
     "working",
@@ -441,6 +544,7 @@ test(
       departments,
     );
     assert.equal(parsed.selectedWorksheet, "ED-ICU");
+    assert.equal(parsed.format, "wide");
     assert.equal(parsed.periodStart, "2026-11-20");
     assert.equal(parsed.periodEnd, "2026-12-19");
     assert.equal(sourceRows.length, 20);
@@ -452,6 +556,23 @@ test(
     );
     assert.equal(new Set(parsed.records.map((record) => record.rowNumber)).size, 20);
     assert.equal(new Set(parsed.records.map((record) => record.date)).size, 30);
+    assert.equal(parsed.mapping.employeeNameColumn, "B");
+    assert.equal(parsed.mapping.employeeIdColumn, "C");
+    assert.equal(parsed.mapping.employeeRoleColumn, "D");
+    assert.ok(!parsed.records.some((record) => record.rowNumber === 20 || record.rowNumber === 30));
+    assert.deepEqual(
+      Object.fromEntries(
+        ["ED", "ICU", "HCA"].map((code) => [
+          code,
+          new Set(
+            parsed.records
+              .filter((record) => record.sourceDepartment === code)
+              .map((record) => record.rowNumber),
+          ).size,
+        ]),
+      ),
+      { ED: 13, ICU: 6, HCA: 1 },
+    );
 
     const expectedRawCounts = new Map<string, number>();
     const normalizedCounts = new Map<string, number>();
@@ -471,6 +592,10 @@ test(
         assert.equal(record.rawShiftValue, rawShiftValue);
         assert.equal(record.sourceEmployeeName, sourceName);
         assert.equal(record.sourceEmployeeId, sourceId || null);
+        assert.equal(
+          record.sourceRole,
+          rawExcelText(sourceSheet.getRow(row).getCell(4).value),
+        );
         assert.equal(record.departmentId, expectedDepartmentId);
         const expectedShift = shiftTypes.find((shift) => shift.code === normalized);
         assert.equal(record.shiftTypeId, expectedShift?.id);

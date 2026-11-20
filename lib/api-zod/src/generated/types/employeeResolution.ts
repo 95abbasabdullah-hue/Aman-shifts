@@ -10,4 +10,5 @@ export interface EmployeeResolution {
   /** @minimum 1 */
   rowNumber: number;
   employeeId: string;
+  rememberAlias?: boolean;
 }

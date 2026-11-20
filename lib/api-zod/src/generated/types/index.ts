@@ -35,6 +35,7 @@ export * from './importPreview';
 export * from './importResolutionInput';
 export * from './listEmployeesParams';
 export * from './listRosterVersionsParams';
+export * from './newEmployeeResolution';
 export * from './rollbackRosterInput';
 export * from './rosterImport';
 export * from './rosterImportDetectedFormat';

@@ -469,32 +469,48 @@ function ImportsPage() {
   const [mode,setMode]=useState<'replace'|'merge'>('replace');
   const [publish,setPublish]=useState(false);
   const [employeeMap,setEmployeeMap]=useState<Record<string,string>>({});
+  const [registerNewEmployee,setRegisterNewEmployee]=useState<Record<string,boolean>>({});
+  const [registrationRoles,setRegistrationRoles]=useState<Record<string,string>>({});
+  const [registrationDepartments,setRegistrationDepartments]=useState<Record<string,string>>({});
+  const [rememberAliases,setRememberAliases]=useState<Record<string,boolean>>({});
   const [shiftMap,setShiftMap]=useState<Record<string,string>>({});
   const imports=useListRosterImports();
   const employees=useListEmployees({activeOnly:true});
+  const departments=useListDepartments();
   const shifts=useListShiftTypes();
-  const previewMutation=usePreviewRosterImport({mutation:{onSuccess:(data)=>{setPreview(data);setMapping(data.mapping);setEmployeeMap(Object.fromEntries(data.records.filter(r=>!r.sourceEmployeeId).map(r=>[String(r.rowNumber),r.employeeId||''])));setShiftMap({});invalidate(getListRosterImportsQueryKey());}}});
-  const resolveMutation=useResolveRosterImport({mutation:{onSuccess:(data)=>{setPreview(data);invalidate(getListRosterImportsQueryKey());}}});
+  const previewMutation=usePreviewRosterImport({mutation:{onSuccess:(data)=>{setPreview(data);setMapping(data.mapping);setEmployeeMap(Object.fromEntries(data.records.filter(r=>!r.sourceEmployeeId).map(r=>[String(r.rowNumber),r.employeeId||''])));setRegisterNewEmployee({});setRegistrationRoles({});setRegistrationDepartments({});setRememberAliases({});setShiftMap({});invalidate(getListRosterImportsQueryKey());}}});
+  const resolveMutation=useResolveRosterImport({mutation:{onSuccess:(data)=>{setPreview(data);setRegisterNewEmployee({});setRegistrationRoles({});setRegistrationDepartments({});setRememberAliases({});invalidate(getListRosterImportsQueryKey());invalidate(getListEmployeesQueryKey());}}});
   const confirmMutation=useConfirmRosterImport({mutation:{onSuccess:()=>{setPreview(null);setFile(null);invalidate(getListRosterImportsQueryKey());invalidateRosterReads();}}});
   const setFileFromInput=(e:FormEvent<HTMLInputElement>)=>{const target=e.currentTarget;setFile(target.files?.[0]||null);};
   const runPreview=()=>{if(file)previewMutation.mutate({data:{file,month,mappingJson:mapping?JSON.stringify(mapping):undefined}});};
-  const columns=['format','employeeIdColumn','employeeNameColumn','departmentColumn','dateColumn','shiftCodeColumn'] as const;
-  const mappingFieldNames:Record<(typeof columns)[number],string>={format:'Format',employeeIdColumn:'Employee ID column',employeeNameColumn:'Employee name column',departmentColumn:'Department column',dateColumn:'Date column',shiftCodeColumn:'Shift code column'};
+  const columns=['format','employeeIdColumn','employeeNameColumn','employeeRoleColumn','departmentColumn','dateColumn','shiftCodeColumn'] as const;
+  const mappingFieldNames:Record<(typeof columns)[number],string>={format:'Format',employeeIdColumn:'Employee ID column',employeeNameColumn:'Employee name column',employeeRoleColumn:'Employee role column',departmentColumn:'Department column',dateColumn:'Date column',shiftCodeColumn:'Shift code column'};
   const resolve=()=>{
     if(!preview)return;
     resolveMutation.mutate({importId:preview.import.id,data:{
        employees:Array.from(new Map(preview.records.filter(record=>!record.employeeId||!record.sourceEmployeeId)
          .map(record=>[record.rowNumber,record])).values()).flatMap(record=>{
+            if(registerNewEmployee[String(record.rowNumber)])return [];
            const employeeId=employeeMap[String(record.rowNumber)];
-           return employeeId?[{rowNumber:record.rowNumber,employeeId}]:[];
+            return employeeId?[{rowNumber:record.rowNumber,employeeId,rememberAlias:!!rememberAliases[String(record.rowNumber)]}]:[];
          }),
+       newEmployees:Array.from(new Map(preview.records.filter(record=>!record.employeeId||!record.sourceEmployeeId)
+          .map(record=>[record.rowNumber,record])).values()).flatMap(record=>{
+            const row=String(record.rowNumber);
+            if(!registerNewEmployee[row])return [];
+            return [{rowNumber:record.rowNumber,jobTitle:(registrationRoles[row]??record.sourceRole).trim(),departmentId:registrationDepartments[row]??record.departmentId??''}];
+          }),
       shiftCodes:Object.entries(shiftMap).filter(([,shiftTypeId])=>shiftTypeId).map(([shiftCode,shiftTypeId])=>({shiftCode,shiftTypeId})),
     }});
   };
   const employeeRows=Array.from(new Map((preview?.records||[]).filter(r=>!r.employeeId||!r.sourceEmployeeId)
     .map(record=>[record.rowNumber,record])).values());
   const unknownShifts=Array.from(new Set(preview?.records.filter(r=>!r.shiftTypeId&&r.shiftCode).map(r=>r.shiftCode)||[]));
-  const unresolved=employeeRows.some(record=>!employeeMap[String(record.rowNumber)])||unknownShifts.some(code=>!shiftMap[code]);
+  const unresolved=employeeRows.some(record=>{
+    const row=String(record.rowNumber);
+    if(registerNewEmployee[row])return !record.sourceEmployeeId?.trim()||!!record.employeeId||!(registrationRoles[row]??record.sourceRole).trim()||!(registrationDepartments[row]??record.departmentId);
+    return !employeeMap[row];
+  })||unknownShifts.some(code=>!shiftMap[code]);
   const staffCount=new Set((preview?.records||[]).map(record=>record.rowNumber)).size;
   const dateCount=new Set((preview?.records||[]).map(record=>record.date).filter(Boolean)).size;
   return <AppShell title="Roster imports"><PageHeading eyebrow="MONTHLY ROSTER" title="Roster imports" detail="Upload a prepared Excel roster, resolve any unfamiliar values, then review before it becomes the team schedule."
@@ -521,12 +537,32 @@ function ImportsPage() {
             {key==='format'?<>{['auto','wide','long'].map(v=><option key={v} value={v}>{v==='auto'?'Automatic':v==='wide'?'Wide format':'Long format'}</option>)}</>:
               <><option value="">Not mapped</option>{preview.columns.map(col=><option value={col} key={col}>{col}</option>)}</>}</select></label>)}</div>
           {preview.worksheetChoices.length>1&&<label className="form-field worksheet-choice"><span>Confirm latest worksheet</span><select value={mapping?.worksheetName||''} onChange={e=>setMapping(prev=>({...prev!,worksheetName:e.target.value||null}))}><option value="">Choose worksheet</option>{preview.worksheetChoices.map(name=><option key={name} value={name}>{name}</option>)}</select><small>Choose the correct sheet, then preview again.</small></label>}
-          {preview.records.length>0&&<div className="table-wrap preview-table"><table><thead><tr><th>Row</th><th>Date</th><th>Employee</th><th>Shift</th><th>Check</th></tr></thead>
-            <tbody>{preview.records.slice(0,12).map((r,i)=><tr key={`${r.rowNumber}-${r.date}-${i}`}><td>{r.rowNumber}</td><td>{r.date||'—'}</td><td>{r.sourceEmployeeName||r.employeeName||r.sourceEmployeeId||'—'}</td><td>{r.shiftCode||'Blank cell'}</td><td><span className={`mini-status ${r.valid?'valid':'invalid'}`}>{r.valid?'Valid':'Check'}</span></td></tr>)}</tbody></table>
+          {preview.records.length>0&&<div className="table-wrap preview-table"><table><thead><tr><th>Row</th><th>Date</th><th>Employee</th><th>Department</th><th>Role</th><th>Shift</th><th>Check</th></tr></thead>
+            <tbody>{preview.records.slice(0,12).map((r,i)=><tr key={`${r.rowNumber}-${r.date}-${i}`}><td>{r.rowNumber}</td><td>{r.date||'—'}</td><td>{r.sourceEmployeeName||r.employeeName||r.sourceEmployeeId||'—'}</td><td>{r.sourceDepartment||'—'}</td><td>{r.sourceRole||'—'}</td><td>{r.shiftCode||'Blank cell'}</td><td><span className={`mini-status ${r.valid?'valid':'invalid'}`}>{r.valid?'Valid':'Check'}</span></td></tr>)}</tbody></table>
             {preview.records.length>12&&<p className="table-footnote">Showing 12 of {preview.records.length} cells.</p>}</div>}
           {(employeeRows.length>0||unknownShifts.length>0)&&<div className="resolution-box"><div className="eyebrow">MATCH UNRECOGNIZED VALUES</div><p>Connect imported codes to the current team directory before confirming.</p>
-            {employeeRows.map(record=><label className="resolution-row" key={`emp-${record.rowNumber}`}><span>Row {record.rowNumber} · <b>{record.sourceEmployeeName||record.sourceEmployeeId||record.employeeName}</b>{!record.sourceEmployeeId?' · Missing ID':''}</span><select value={employeeMap[String(record.rowNumber)]||''} onChange={e=>setEmployeeMap(m=>({...m,[String(record.rowNumber)]:e.target.value}))}><option value="">Choose employee</option>{(employees.data||[]).map(e=><option key={e.id} value={e.id}>{e.fullName} · {e.employeeCode}</option>)}</select></label>)}
+            {employeeRows.map(record=>{
+              const row=String(record.rowNumber);
+              const registering=!!registerNewEmployee[row];
+              return <div className="resolution-row" key={`emp-${record.rowNumber}`}>
+                <div><span>Row {record.rowNumber} · <b>{record.sourceEmployeeName||record.sourceEmployeeId||record.employeeName}</b>{!record.sourceEmployeeId?' · Missing ID':''}</span>
+                  <small>{record.sourceDepartment||'Department not detected'}{record.sourceRole?` · ${record.sourceRole}`:''}</small></div>
+                {!registering&&<select value={employeeMap[row]||''} onChange={e=>setEmployeeMap(m=>({...m,[row]:e.target.value}))}>
+                  <option value="">Choose employee</option>{(employees.data||[]).map(e=><option key={e.id} value={e.id}>{e.fullName} · {e.employeeCode}</option>)}</select>}
+                {registering&&<div className="resolution-register-fields">
+                  <label className="form-field"><span>Role</span><input value={registrationRoles[row]??record.sourceRole} onChange={e=>setRegistrationRoles(m=>({...m,[row]:e.target.value}))} maxLength={120}/></label>
+                  <label className="form-field"><span>Department</span><select value={registrationDepartments[row]??record.departmentId??''} onChange={e=>setRegistrationDepartments(m=>({...m,[row]:e.target.value}))}>
+                    <option value="">Choose department</option>{(departments.data||[]).map(d=><option key={d.id} value={d.id}>{d.name} · {d.code}</option>)}</select></label>
+                </div>}
+                <label className="resolution-option"><input type="checkbox" checked={registering} disabled={!record.sourceEmployeeId?.trim()||!!record.employeeId} onChange={e=>{
+                  setRegisterNewEmployee(m=>({...m,[row]:e.target.checked}));
+                  if(e.target.checked)setEmployeeMap(m=>({...m,[row]:''}));
+                }}/><span>Register as new employee{!record.sourceEmployeeId?.trim()?' · source ID required':''}</span></label>
+                {!registering&&<label className="resolution-option"><input type="checkbox" checked={!!rememberAliases[row]} disabled={!employeeMap[row]||!record.sourceEmployeeName.trim()} onChange={e=>setRememberAliases(m=>({...m,[row]:e.target.checked}))}/><span>Remember this name for future imports</span></label>}
+              </div>;
+            })}
             {unknownShifts.map(code=><label className="resolution-row" key={`shift-${code}`}><span>Shift code <b>{code}</b></span><select value={shiftMap[code]||''} onChange={e=>setShiftMap(m=>({...m,[code]:e.target.value}))}><option value="">Choose shift type</option>{(shifts.data||[]).map(s=><option key={s.id} value={s.id}>{s.name} · {s.code}</option>)}</select></label>)}
+            {resolveMutation.isError&&<p className="inline-error"><CircleAlert size={15}/> The employee mappings could not be saved. Check for duplicate IDs or names and try again.</p>}
             <button className="button button-secondary" disabled={unresolved||resolveMutation.isPending} onClick={resolve} data-testid="button-resolve-import">{resolveMutation.isPending?'Applying matches…':'Apply matches'}</button>
           </div>}
           {preview.issues.length>0&&<div className="issue-list">{preview.issues.map((issue,i)=><div className="issue-row" key={`${issue.code}-${i}`}><CircleAlert size={15}/><span>{issue.rowNumber?`Row ${issue.rowNumber}: `:''}{issue.message}</span></div>)}</div>}

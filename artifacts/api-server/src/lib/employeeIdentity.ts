@@ -2,6 +2,7 @@ export type IdentityEmployee = {
   id: string;
   employeeCode: string;
   fullName: string;
+  departmentId?: string;
   aliases?: string[];
 };
 
@@ -22,7 +23,7 @@ export function normalizeIdentityText(value: string): string {
 
 export function stripShiftPatternAnnotation(value: string): string {
   const trimmed = value.trim();
-  const match = trimmed.match(/\s*[\[(]([^\])]+)[\])]$/);
+  const match = trimmed.match(/\s*[\[(]([^)\]]+)[\]\)]$/);
   if (!match || !SHIFT_ANNOTATION.test(match[1].trim())) return trimmed;
   return trimmed.slice(0, match.index).trim();
 }

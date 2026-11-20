@@ -490,6 +490,7 @@ export const PreviewRosterImportResponse = zod.object({
   "format": zod.enum(['auto', 'wide', 'long']),
   "employeeIdColumn": zod.string().nullable(),
   "employeeNameColumn": zod.string().nullable(),
+  "employeeRoleColumn": zod.string().nullable(),
   "departmentColumn": zod.string().nullable(),
   "dateColumn": zod.string().nullable(),
   "shiftCodeColumn": zod.string().nullable(),
@@ -504,6 +505,8 @@ export const PreviewRosterImportResponse = zod.object({
   "date": zod.string().date().nullable(),
   "sourceEmployeeId": zod.string().nullable(),
   "sourceEmployeeName": zod.string(),
+  "sourceDepartment": zod.string(),
+  "sourceRole": zod.string(),
   "employeeId": zod.string().nullable(),
   "employeeCode": zod.string().nullable(),
   "employeeName": zod.string(),
@@ -515,7 +518,7 @@ export const PreviewRosterImportResponse = zod.object({
   "valid": zod.boolean()
 })),
   "issues": zod.array(zod.object({
-  "code": zod.enum(['unknown_employee', 'unknown_shift', 'unknown_department', 'missing_employee_id', 'competing_schedules', 'duplicate', 'invalid_date', 'missing_value', 'unsupported_sheet']),
+  "code": zod.enum(['unknown_employee', 'ambiguous_employee', 'unknown_shift', 'unknown_department', 'missing_employee_id', 'competing_schedules', 'duplicate', 'invalid_date', 'missing_value', 'unsupported_sheet']),
   "message": zod.string(),
   "rowNumber": zod.number().int().nullable(),
   "value": zod.string().nullable()
@@ -531,12 +534,21 @@ export const ResolveRosterImportParams = zod.object({
 })
 
 
+export const resolveRosterImportBodyEmployeesItemRememberAliasDefault = false;
+export const resolveRosterImportBodyNewEmployeesItemJobTitleMax = 120;
+
 
 
 export const ResolveRosterImportBody = zod.object({
   "employees": zod.array(zod.object({
   "rowNumber": zod.number().int().min(1),
-  "employeeId": zod.string()
+  "employeeId": zod.string(),
+  "rememberAlias": zod.boolean().default(resolveRosterImportBodyEmployeesItemRememberAliasDefault)
+})),
+  "newEmployees": zod.array(zod.object({
+  "rowNumber": zod.number().int().min(1),
+  "jobTitle": zod.string().min(1).max(resolveRosterImportBodyNewEmployeesItemJobTitleMax),
+  "departmentId": zod.string()
 })),
   "shiftCodes": zod.array(zod.object({
   "shiftCode": zod.string(),
@@ -565,6 +577,7 @@ export const ResolveRosterImportResponse = zod.object({
   "format": zod.enum(['auto', 'wide', 'long']),
   "employeeIdColumn": zod.string().nullable(),
   "employeeNameColumn": zod.string().nullable(),
+  "employeeRoleColumn": zod.string().nullable(),
   "departmentColumn": zod.string().nullable(),
   "dateColumn": zod.string().nullable(),
   "shiftCodeColumn": zod.string().nullable(),
@@ -579,6 +592,8 @@ export const ResolveRosterImportResponse = zod.object({
   "date": zod.string().date().nullable(),
   "sourceEmployeeId": zod.string().nullable(),
   "sourceEmployeeName": zod.string(),
+  "sourceDepartment": zod.string(),
+  "sourceRole": zod.string(),
   "employeeId": zod.string().nullable(),
   "employeeCode": zod.string().nullable(),
   "employeeName": zod.string(),
@@ -590,7 +605,7 @@ export const ResolveRosterImportResponse = zod.object({
   "valid": zod.boolean()
 })),
   "issues": zod.array(zod.object({
-  "code": zod.enum(['unknown_employee', 'unknown_shift', 'unknown_department', 'missing_employee_id', 'competing_schedules', 'duplicate', 'invalid_date', 'missing_value', 'unsupported_sheet']),
+  "code": zod.enum(['unknown_employee', 'ambiguous_employee', 'unknown_shift', 'unknown_department', 'missing_employee_id', 'competing_schedules', 'duplicate', 'invalid_date', 'missing_value', 'unsupported_sheet']),
   "message": zod.string(),
   "rowNumber": zod.number().int().nullable(),
   "value": zod.string().nullable()

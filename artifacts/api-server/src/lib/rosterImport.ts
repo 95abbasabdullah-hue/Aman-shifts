@@ -265,6 +265,7 @@ export async function parseRosterWorkbook(
     employeeNameColumn: employeeNameColumn
       ? headers[employeeNameColumn - 1]
       : null,
+    employeeRoleColumn: null,
     departmentColumn: departmentColumn ? headers[departmentColumn - 1] : null,
     dateColumn: dateColumn ? headers[dateColumn - 1] : null,
     shiftCodeColumn: shiftCodeColumn ? headers[shiftCodeColumn - 1] : null,
@@ -373,6 +374,8 @@ export async function parseRosterWorkbook(
       date: dateValue,
       sourceEmployeeId: employeeCode || null,
       sourceEmployeeName: employeeName,
+      sourceDepartment: departmentValue,
+      sourceRole: "",
       employeeId: employee?.id ?? null,
       employeeCode: employeeCode || null,
       employeeName: employeeName || "Unmatched employee",

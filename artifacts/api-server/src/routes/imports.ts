@@ -24,6 +24,7 @@ import {
   auditLogsTable,
   db,
   departmentsTable,
+  employeeAliasesTable,
   employeesTable,
   importJobsTable,
   rosterVersionsTable,
@@ -33,6 +34,10 @@ import {
 import { currentAppUser, requireAdmin } from "../lib/amanAuth";
 import { writeAuditLog } from "../lib/audit";
 import { parseRosterWorkbook } from "../lib/rosterImportParser";
+import {
+  normalizeEmployeeName,
+  validateNewEmployeeRegistrations,
+} from "../lib/employeeIdentity";
 import { normalizeShiftValue } from "../lib/shiftDefinitions";
 
 const router: IRouter = Router();
@@ -59,6 +64,7 @@ const mappingJsonSchema = z.object({
   format: z.enum(["auto", "wide", "long"]).default("auto"),
   employeeIdColumn: z.string().nullable().default(null),
   employeeNameColumn: z.string().nullable().default(null),
+  employeeRoleColumn: z.string().nullable().default(null),
   departmentColumn: z.string().nullable().default(null),
   dateColumn: z.string().nullable().default(null),
   shiftCodeColumn: z.string().nullable().default(null),
@@ -69,6 +75,7 @@ const emptyMapping: ImportMapping = {
   format: "auto",
   employeeIdColumn: null,
   employeeNameColumn: null,
+  employeeRoleColumn: null,
   departmentColumn: null,
   dateColumn: null,
   shiftCodeColumn: null,
@@ -281,6 +288,22 @@ router.post(
         })
         .from(employeesTable)
         .where(eq(employeesTable.active, true));
+      const employeeAliases = await db
+        .select({
+          employeeId: employeeAliasesTable.employeeId,
+          alias: employeeAliasesTable.alias,
+        })
+        .from(employeeAliasesTable);
+      const aliasesByEmployee = new Map<string, string[]>();
+      for (const alias of employeeAliases) {
+        const aliases = aliasesByEmployee.get(alias.employeeId) ?? [];
+        aliases.push(alias.alias);
+        aliasesByEmployee.set(alias.employeeId, aliases);
+      }
+      const employeesWithAliases = employees.map((employee) => ({
+        ...employee,
+        aliases: aliasesByEmployee.get(employee.id) ?? [],
+      }));
       const shiftTypes = await db
         .select({
           id: shiftTypesTable.id,
@@ -303,7 +326,7 @@ router.post(
         req.file.buffer,
         parsedBody.data.month,
         mapping,
-        employees,
+        employeesWithAliases,
         shiftTypes,
         departments,
       );
@@ -379,9 +402,75 @@ router.post(
       return;
     }
 
-    const employeeIds = [...new Set(body.data.employees.map((entry) => entry.employeeId))];
+    const stored = readStoredPreview(job.preview);
+    const sourceByRow = new Map(
+      stored.records.map((record) => [record.rowNumber, record]),
+    );
+    const resolutionRows = [
+      ...body.data.employees.map((item) => item.rowNumber),
+      ...body.data.newEmployees.map((item) => item.rowNumber),
+    ];
+    if (new Set(resolutionRows).size !== resolutionRows.length) {
+      res.status(400).json({ error: "Resolve each source employee row only once." });
+      return;
+    }
+    const missingRows = resolutionRows.filter((rowNumber) => !sourceByRow.has(rowNumber));
+    if (missingRows.length) {
+      res.status(400).json({ error: "A selected employee row is not part of this import." });
+      return;
+    }
+
+    const registrations = body.data.newEmployees.map((entry) => {
+      const source = sourceByRow.get(entry.rowNumber)!;
+      return {
+        rowNumber: entry.rowNumber,
+        employeeCode: source.sourceEmployeeId?.trim() ?? "",
+        fullName: source.sourceEmployeeName.trim(),
+        jobTitle: entry.jobTitle.trim() || source.sourceRole.trim(),
+        departmentId: entry.departmentId,
+      };
+    });
+    const allExistingEmployees = await db
+      .select({
+        id: employeesTable.id,
+        employeeCode: employeesTable.employeeCode,
+        fullName: employeesTable.fullName,
+        departmentId: employeesTable.departmentId,
+        active: employeesTable.active,
+      })
+      .from(employeesTable);
+    const allExistingAliases = await db
+      .select({ alias: employeeAliasesTable.alias })
+      .from(employeeAliasesTable);
+    const registrationValidation = validateNewEmployeeRegistrations(
+      registrations,
+      [
+        ...allExistingEmployees,
+        ...allExistingAliases.map((item) => ({ employeeCode: "", fullName: item.alias })),
+      ],
+    );
+    if (!registrationValidation.valid) {
+      res.status(409).json({ error: registrationValidation.error });
+      return;
+    }
+    for (const entry of body.data.newEmployees) {
+      const source = sourceByRow.get(entry.rowNumber)!;
+      if (source.employeeId || !source.sourceEmployeeId?.trim()) {
+        res.status(400).json({
+          error: "Only unmatched roster rows with a source Employee ID can be registered.",
+        });
+        return;
+      }
+      if (!source.sourceEmployeeName.trim()) {
+        res.status(400).json({ error: "A source employee name is required to register staff." });
+        return;
+      }
+    }
+
+    const manualEmployeeIds = [...new Set(body.data.employees.map((entry) => entry.employeeId))];
     const shiftIds = [...new Set(body.data.shiftCodes.map((entry) => entry.shiftTypeId))];
-    const employeeRows = employeeIds.length
+    const departmentIds = [...new Set(body.data.newEmployees.map((entry) => entry.departmentId))];
+    const activeEmployeeRows = manualEmployeeIds.length
       ? await db
           .select({
             id: employeesTable.id,
@@ -390,7 +479,7 @@ router.post(
             departmentId: employeesTable.departmentId,
           })
           .from(employeesTable)
-          .where(and(inArray(employeesTable.id, employeeIds), eq(employeesTable.active, true)))
+          .where(and(inArray(employeesTable.id, manualEmployeeIds), eq(employeesTable.active, true)))
       : [];
     const shiftRows = shiftIds.length
       ? await db
@@ -402,12 +491,23 @@ router.post(
           .from(shiftTypesTable)
           .where(and(inArray(shiftTypesTable.id, shiftIds), eq(shiftTypesTable.active, true)))
       : [];
-    if (employeeRows.length !== employeeIds.length || shiftRows.length !== shiftIds.length) {
-      res.status(400).json({ error: "Choose active employees and shift types" });
+    const activeDepartmentRows = departmentIds.length
+      ? await db
+          .select({ id: departmentsTable.id })
+          .from(departmentsTable)
+          .where(and(inArray(departmentsTable.id, departmentIds), eq(departmentsTable.active, true)))
+      : [];
+    if (
+      activeEmployeeRows.length !== manualEmployeeIds.length ||
+      shiftRows.length !== shiftIds.length ||
+      activeDepartmentRows.length !== departmentIds.length
+    ) {
+      res.status(400).json({
+        error: "Choose active employees, departments, and shift types.",
+      });
       return;
     }
-    const employeeById = new Map(employeeRows.map((employee) => [employee.id, employee]));
-    const shiftById = new Map(shiftRows.map((shift) => [shift.id, shift]));
+
     const employeeMapping = new Map(
       body.data.employees.map((entry) => [entry.rowNumber, entry.employeeId]),
     );
@@ -417,111 +517,234 @@ router.post(
         entry.shiftTypeId,
       ]),
     );
-    const stored = readStoredPreview(job.preview);
-    const records = stored.records.map((record) => {
-      const employeeId = employeeMapping.get(record.rowNumber);
-      const employee = employeeId ? employeeById.get(employeeId) : undefined;
-      const mappedShiftId = shiftMapping.get(normalizeShiftValue(record.shiftCode));
-      const shift = mappedShiftId ? shiftById.get(mappedShiftId) : undefined;
-      return {
-        ...record,
-        ...(employee
-          ? {
-              employeeId: employee.id,
-              employeeCode: employee.employeeCode,
-              employeeName: employee.fullName,
-              departmentId: employee.departmentId,
-            }
-          : {}),
-        ...(shift
-          ? {
-              shiftTypeId: shift.id,
-              shiftCode: shift.code,
-              shiftName: shift.name,
-            }
-          : {}),
-      };
-    });
-    const resolvedEmployeeRows = new Set(employeeMapping.keys());
-    const resolvedShiftCodes = new Set(shiftMapping.keys());
-    const issues = stored.issues.filter((item) => {
-      const rowResolved =
-        item.rowNumber !== null && resolvedEmployeeRows.has(item.rowNumber);
-      if (
-        rowResolved &&
-        ["unknown_employee", "missing_employee_id", "unknown_department"].includes(item.code)
-      ) {
-        return false;
+    const aliasRequests = body.data.employees.filter((entry) => entry.rememberAlias);
+    for (const entry of aliasRequests) {
+      const source = sourceByRow.get(entry.rowNumber)!;
+      if (!normalizeEmployeeName(source.sourceEmployeeName)) {
+        res.status(400).json({ error: "This source name cannot be saved as an approved alias." });
+        return;
       }
-      if (
-        item.code === "unknown_shift" &&
-        item.value &&
-        resolvedShiftCodes.has(normalizeShiftValue(item.value))
-      ) {
-        return false;
-      }
-      return true;
-    });
-    for (const record of records) {
-      if (!record.employeeId && (record.employeeCode || record.employeeName)) {
-        issues.push({
-          code: "unknown_employee",
-          message: "The employee does not match the staff directory.",
-          rowNumber: record.rowNumber,
-          value: record.employeeCode || record.employeeName,
+    }
+
+    const user = currentAppUser(req);
+    const { updated } = await db.transaction(async (tx) => {
+      const newEmployeeRows = registrations.length
+        ? await tx
+            .insert(employeesTable)
+            .values(
+              registrations.map((registration) => ({
+                employeeCode: registration.employeeCode,
+                fullName: registration.fullName,
+                jobTitle: registration.jobTitle,
+                departmentId: registration.departmentId,
+                active: true,
+              })),
+            )
+            .returning({
+              id: employeesTable.id,
+              employeeCode: employeesTable.employeeCode,
+              fullName: employeesTable.fullName,
+              departmentId: employeesTable.departmentId,
+            })
+        : [];
+      const employeeById = new Map(
+        [...activeEmployeeRows, ...newEmployeeRows].map((employee) => [employee.id, employee]),
+      );
+      const newEmployeeIdByRow = new Map(
+        registrations.map((registration) => [
+          registration.rowNumber,
+          newEmployeeRows.find(
+            (employee) => employee.employeeCode === registration.employeeCode,
+          )?.id,
+        ]),
+      );
+      const allSourceRows = new Map(
+        [...body.data.employees, ...body.data.newEmployees].map((entry) => [
+          entry.rowNumber,
+          entry,
+        ]),
+      );
+
+      const aliasCandidates = new Map<
+        string,
+        { employeeId: string; alias: string }
+      >();
+      for (const entry of aliasRequests) {
+        const normalizedAlias = normalizeEmployeeName(sourceByRow.get(entry.rowNumber)!.sourceEmployeeName);
+        const employee = employeeById.get(entry.employeeId);
+        if (!employee) throw new Error("The selected employee is no longer active.");
+        if (normalizeEmployeeName(employee.fullName) === normalizedAlias) continue;
+        const previous = aliasCandidates.get(normalizedAlias);
+        if (previous && previous.employeeId !== employee.id) {
+          throw new Error("The same source name cannot be mapped to different employees.");
+        }
+        aliasCandidates.set(normalizedAlias, {
+          employeeId: employee.id,
+          alias: sourceByRow.get(entry.rowNumber)!.sourceEmployeeName,
         });
       }
-      if (!record.shiftTypeId && record.shiftCode) {
-        issues.push({
-          code: "unknown_shift",
-          message: "The shift code is not configured.",
-          rowNumber: record.rowNumber,
-          value: record.shiftCode,
-        });
+      if (aliasCandidates.size) {
+        const aliasKeys = [...aliasCandidates.keys()];
+        const [existingAliases, existingCanonicalNames] = await Promise.all([
+          tx
+            .select({
+              normalizedAlias: employeeAliasesTable.normalizedAlias,
+              employeeId: employeeAliasesTable.employeeId,
+            })
+            .from(employeeAliasesTable)
+            .where(inArray(employeeAliasesTable.normalizedAlias, aliasKeys)),
+          tx
+            .select({
+              id: employeesTable.id,
+              fullName: employeesTable.fullName,
+            })
+            .from(employeesTable),
+        ]);
+        for (const [normalizedAlias, candidate] of aliasCandidates) {
+          const currentAlias = existingAliases.find((item) => item.normalizedAlias === normalizedAlias);
+          if (currentAlias && currentAlias.employeeId !== candidate.employeeId) {
+            throw new Error("This approved name is already linked to another employee.");
+          }
+          const canonicalConflict = existingCanonicalNames.find(
+            (item) =>
+              item.id !== candidate.employeeId &&
+              normalizeEmployeeName(item.fullName) === normalizedAlias,
+          );
+          if (canonicalConflict) {
+            throw new Error("This name matches another employee; choose the correct directory record.");
+          }
+        }
+        for (const [normalizedAlias, candidate] of aliasCandidates) {
+          const existing = existingAliases.find((item) => item.normalizedAlias === normalizedAlias);
+          if (existing) continue;
+          await tx.insert(employeeAliasesTable).values({
+            employeeId: candidate.employeeId,
+            alias: candidate.alias,
+            normalizedAlias,
+            createdBy: user.id,
+          });
+        }
       }
-    }
-    const uniqueIssues = new Map<string, (typeof issues)[number]>();
-    for (const item of issues) {
-      uniqueIssues.set(
-        `${item.code}:${item.rowNumber ?? ""}:${item.value ?? ""}:${item.message}`,
-        item,
+
+      const records = stored.records.map((record) => {
+        const mappedEmployeeId =
+          employeeMapping.get(record.rowNumber) ??
+          newEmployeeIdByRow.get(record.rowNumber) ??
+          undefined;
+        const employee = mappedEmployeeId ? employeeById.get(mappedEmployeeId) : undefined;
+        const mappedShiftId = shiftMapping.get(normalizeShiftValue(record.shiftCode));
+        const shift = mappedShiftId ? shiftRows.find((item) => item.id === mappedShiftId) : undefined;
+        return {
+          ...record,
+          ...(employee
+            ? {
+                employeeId: employee.id,
+                employeeCode: employee.employeeCode,
+                employeeName: employee.fullName,
+                departmentId: employee.departmentId,
+              }
+            : {}),
+          ...(shift
+            ? {
+                shiftTypeId: shift.id,
+                shiftCode: shift.code,
+                shiftName: shift.name,
+              }
+            : {}),
+        };
+      });
+      const resolvedEmployeeRows = new Set(allSourceRows.keys());
+      const resolvedShiftCodes = new Set(shiftMapping.keys());
+      const issues = stored.issues.filter((item) => {
+        const rowResolved =
+          item.rowNumber !== null && resolvedEmployeeRows.has(item.rowNumber);
+        if (
+          rowResolved &&
+          ["unknown_employee", "ambiguous_employee", "missing_employee_id", "unknown_department"].includes(item.code)
+        ) {
+          return false;
+        }
+        if (
+          item.code === "unknown_shift" &&
+          item.value &&
+          resolvedShiftCodes.has(normalizeShiftValue(item.value))
+        ) {
+          return false;
+        }
+        return true;
+      });
+      for (const record of records) {
+        if (!record.employeeId && (record.employeeCode || record.employeeName)) {
+          issues.push({
+            code: "unknown_employee",
+            message: "The employee does not match the staff directory.",
+            rowNumber: record.rowNumber,
+            value: record.employeeCode || record.employeeName,
+          });
+        }
+        if (!record.shiftTypeId && record.shiftCode) {
+          issues.push({
+            code: "unknown_shift",
+            message: "The shift code is not configured.",
+            rowNumber: record.rowNumber,
+            value: record.shiftCode,
+          });
+        }
+      }
+      const uniqueIssues = new Map<string, (typeof issues)[number]>();
+      for (const item of issues) {
+        uniqueIssues.set(
+          `${item.code}:${item.rowNumber ?? ""}:${item.value ?? ""}:${item.message}`,
+          item,
+        );
+      }
+      const resolvedIssues = [...uniqueIssues.values()];
+      const issueRows = new Set(
+        resolvedIssues
+          .map((item) => item.rowNumber)
+          .filter((row): row is number => row !== null),
       );
-    }
-    const resolvedIssues = [...uniqueIssues.values()];
-    const issueRows = new Set(
-      resolvedIssues
-        .map((item) => item.rowNumber)
-        .filter((row): row is number => row !== null),
-    );
-    for (const record of records) {
-      record.valid = Boolean(
-        record.employeeId &&
-          record.departmentId &&
-          record.shiftTypeId &&
-          record.date &&
-          !issueRows.has(record.rowNumber),
-      );
-    }
-    const status = resolvedIssues.length ? "needs_review" : "ready";
-    const [updated] = await db
-      .update(importJobsTable)
-      .set({
-        status,
-        validCount: records.filter((record) => record.valid).length,
-        issueCount: resolvedIssues.length,
-        preview: {
-          columns: stored.columns,
-          records,
-          issues: resolvedIssues,
-          periodStart: stored.periodStart,
-          periodEnd: stored.periodEnd,
-          selectedWorksheet: stored.selectedWorksheet,
-          worksheetChoices: stored.worksheetChoices,
-        },
-        mapping: job.mapping,
-      })
-      .where(eq(importJobsTable.id, job.id))
-      .returning();
+      for (const record of records) {
+        record.valid = Boolean(
+          record.employeeId &&
+            record.departmentId &&
+            record.shiftTypeId &&
+            record.date &&
+            !issueRows.has(record.rowNumber),
+        );
+      }
+      const status = resolvedIssues.length ? "needs_review" : "ready";
+      const [updated] = await tx
+        .update(importJobsTable)
+        .set({
+          status,
+          validCount: records.filter((record) => record.valid).length,
+          issueCount: resolvedIssues.length,
+          preview: {
+            columns: stored.columns,
+            records,
+            issues: resolvedIssues,
+            periodStart: stored.periodStart,
+            periodEnd: stored.periodEnd,
+            selectedWorksheet: stored.selectedWorksheet,
+            worksheetChoices: stored.worksheetChoices,
+          },
+          mapping: job.mapping,
+        })
+        .where(eq(importJobsTable.id, job.id))
+        .returning();
+      return { updated };
+    }).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : "Could not resolve roster employees.";
+      if (message.includes("already") || message.includes("matches") || message.includes("linked")) {
+        res.status(409).json({ error: message });
+      } else {
+        req.log.error({ err: error }, "Could not apply roster employee resolutions");
+        res.status(400).json({ error: "Could not apply roster employee resolutions." });
+      }
+      return { updated: null };
+    });
+    if (!updated) return;
     await writeAuditLog({
       actorUserId: currentAppUser(req).id,
       action: "roster.import_resolved",
@@ -606,6 +829,8 @@ router.post(
         date: string;
         sourceEmployeeId: string | null;
         sourceEmployeeName: string | null;
+        sourceDepartment: string | null;
+        sourceRole: string | null;
         sourceRawShiftValue: string | null;
         notes: string | null;
       };
@@ -620,6 +845,8 @@ router.post(
             date: shiftAssignmentsTable.date,
             sourceEmployeeId: shiftAssignmentsTable.sourceEmployeeId,
             sourceEmployeeName: shiftAssignmentsTable.sourceEmployeeName,
+            sourceDepartment: shiftAssignmentsTable.sourceDepartment,
+            sourceRole: shiftAssignmentsTable.sourceRole,
             sourceRawShiftValue: shiftAssignmentsTable.sourceRawShiftValue,
             notes: shiftAssignmentsTable.notes,
           })
@@ -645,6 +872,8 @@ router.post(
               date: existing.date,
               sourceEmployeeId: existing.sourceEmployeeId,
               sourceEmployeeName: existing.sourceEmployeeName,
+              sourceDepartment: existing.sourceDepartment,
+              sourceRole: existing.sourceRole,
               sourceRawShiftValue: existing.sourceRawShiftValue,
               notes: existing.notes,
             },
@@ -659,6 +888,8 @@ router.post(
           date: record.date as string,
           sourceEmployeeId: record.sourceEmployeeId,
           sourceEmployeeName: record.sourceEmployeeName,
+          sourceDepartment: record.sourceDepartment,
+          sourceRole: record.sourceRole,
           sourceRawShiftValue: record.rawShiftValue,
           notes: null,
         };

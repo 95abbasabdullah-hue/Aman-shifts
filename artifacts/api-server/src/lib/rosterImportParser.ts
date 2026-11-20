@@ -4,6 +4,10 @@ import type {
   ImportMapping,
   StagedAssignment,
 } from "@workspace/api-zod";
+import {
+  matchEmployeeIdentity,
+  normalizeIdentityText,
+} from "./employeeIdentity";
 import { normalizeShiftValue } from "./shiftDefinitions";
 
 export type EmployeeReference = {
@@ -11,6 +15,7 @@ export type EmployeeReference = {
   employeeCode: string;
   fullName: string;
   departmentId: string;
+  aliases?: string[];
 };
 
 export type DepartmentReference = {
@@ -37,6 +42,7 @@ type SheetCandidate = {
   longColumns?: {
     employeeId: number | null;
     employeeName: number | null;
+    employeeRole: number | null;
     department: number | null;
     date: number;
     shift: number;
@@ -56,11 +62,7 @@ export type ParsedRoster = {
 };
 
 function normalize(value: string): string {
-  return value
-    .normalize("NFKD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9\u0600-\u06ff]+/gu, "");
+  return normalizeIdentityText(value);
 }
 
 function rawCellText(value: ExcelJS.CellValue): string {
@@ -239,6 +241,11 @@ function detectLongCandidate(
       requestedMapping.departmentColumn,
       ["department", "unit", "ward", "القسم"],
     );
+    const employeeRole = explicitColumn(
+      headers,
+      requestedMapping.employeeRoleColumn,
+      ["role", "position", "job title", "designation"],
+    );
     const dates: string[] = [];
     for (let rowNumber = headerRow + 1; rowNumber <= worksheet.rowCount; rowNumber += 1) {
       const date = dateFromCell(worksheet.getRow(rowNumber).getCell(dateColumn), fallbackMonth);
@@ -256,6 +263,7 @@ function detectLongCandidate(
       longColumns: {
         employeeId,
         employeeName,
+        employeeRole,
         department,
         date: dateColumn,
         shift: shiftColumn,
@@ -364,7 +372,13 @@ function detectColumns(
       requestedMapping.departmentColumn,
       ["department", "unit", "ward", "القسم"],
     ) ?? findHeaderAlias(["department", "unit", "ward", "القسم"]);
-  const roleColumn = findHeaderAlias(["role", "position", "job title", "designation"]);
+  const roleColumn =
+    explicitColumn(
+      headers,
+      requestedMapping.employeeRoleColumn,
+      ["role", "position", "job title", "designation"],
+    ) ??
+    findHeaderAlias(["role", "position", "job title", "designation"]);
 
   const scoreColumns = precedingColumns.map((column) => {
     const values: string[] = [];
@@ -418,6 +432,26 @@ function matchDepartment(
     (department) =>
       normalize(department.code) === key || normalize(department.name) === key,
   );
+}
+
+function matchDepartmentFromRole(
+  role: string,
+  departments: DepartmentReference[],
+): DepartmentReference | undefined {
+  const key = normalize(role);
+  if (!key) return undefined;
+  return departments.find((department) => {
+    const code = normalize(department.code);
+    const name = normalize(department.name);
+    const codeToken = new RegExp(
+      `(?:^|[^a-z0-9])${department.code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:$|[^a-z0-9])`,
+      "i",
+    );
+    return (
+      Boolean(code && (key === code || codeToken.test(role))) ||
+      Boolean(name && key.includes(name))
+    );
+  });
 }
 
 function makeIssue(
@@ -477,6 +511,9 @@ function parseLongCandidate(
     employeeNameColumn: columns.employeeName
       ? headers[columns.employeeName - 1] || columnLabel(columns.employeeName)
       : null,
+    employeeRoleColumn: columns.employeeRole
+      ? headers[columns.employeeRole - 1] || columnLabel(columns.employeeRole)
+      : null,
     departmentColumn: columns.department
       ? headers[columns.department - 1] || columnLabel(columns.department)
       : null,
@@ -484,12 +521,6 @@ function parseLongCandidate(
     shiftCodeColumn: headers[columns.shift - 1] || columnLabel(columns.shift),
     worksheetName: worksheet.name,
   };
-  const employeeByCode = new Map(
-    employees.map((employee) => [normalize(employee.employeeCode), employee]),
-  );
-  const employeeByName = new Map(
-    employees.map((employee) => [normalize(employee.fullName), employee]),
-  );
   const shiftByCode = new Map(
     shiftTypes.flatMap((shift) => [
       [normalize(shift.code), shift] as const,
@@ -518,41 +549,51 @@ function parseLongCandidate(
   ) {
     const row = worksheet.getRow(rowNumber);
     const rawId = columns.employeeId
-      ? cellText(row.getCell(columns.employeeId).value)
+      ? rawCellText(row.getCell(columns.employeeId).value)
       : "";
     const rawName = columns.employeeName
       ? rawCellText(row.getCell(columns.employeeName).value)
       : "";
+    const rawRole = columns.employeeRole
+      ? rawCellText(row.getCell(columns.employeeRole).value)
+      : "";
     const rawDepartment = columns.department
-      ? cellText(row.getCell(columns.department).value)
+      ? rawCellText(row.getCell(columns.department).value)
       : "";
     if (rawName) {
       previousEmployeeName = rawName;
       previousEmployeeId = rawId;
     }
-    if (rawDepartment) previousDepartment = rawDepartment;
+    if (rawDepartment.trim()) previousDepartment = rawDepartment;
     const sourceEmployeeId = rawName ? rawId : rawId || previousEmployeeId;
+    const hasSourceEmployeeId = Boolean(sourceEmployeeId.trim());
     const sourceEmployeeName = rawName || previousEmployeeName;
-    const sourceDepartment = rawDepartment || previousDepartment;
+    const sourceRole = rawRole;
+    const sourceDepartment =
+      rawDepartment ||
+      previousDepartment ||
+      matchDepartmentFromRole(sourceRole, departments)?.code ||
+      "";
     const rawDate = row.getCell(columns.date);
     const date = dateFromCell(rawDate, candidate.periodStart.slice(0, 7));
     const rawShiftValue = rawCellText(row.getCell(columns.shift).value);
     if (
-      !sourceEmployeeId &&
+      !hasSourceEmployeeId &&
       !sourceEmployeeName &&
       !rawShiftValue &&
       !cellText(rawDate.value)
     ) {
       continue;
     }
-    const employee = sourceEmployeeId
-      ? employeeByCode.get(normalize(sourceEmployeeId))
-      : employeeByName.get(normalize(sourceEmployeeName));
-    const departmentMatch = matchDepartment(sourceDepartment, departments);
+    const identity = matchEmployeeIdentity(sourceEmployeeId, sourceEmployeeName, employees);
+    const employee = identity.employee;
+    const departmentMatch =
+      matchDepartment(sourceDepartment, departments) ??
+      matchDepartmentFromRole(sourceRole, departments);
     const departmentId = employee?.departmentId ?? departmentMatch?.id ?? null;
     const shiftCode = normalizeShiftValue(rawShiftValue);
     const shift = shiftByCode.get(normalize(shiftCode));
-    const duplicateKey = `${date ?? "invalid"}:${employee?.id ?? normalize(sourceEmployeeId || sourceEmployeeName)}`;
+    const duplicateKey = `${date ?? "invalid"}:${employee?.id ?? normalize(sourceEmployeeId.trim() || sourceEmployeeName)}`;
     const duplicate = duplicateKeys.has(duplicateKey);
     if (date) duplicateKeys.add(duplicateKey);
 
@@ -566,7 +607,7 @@ function parseLongCandidate(
         ),
       );
     }
-    if (!sourceEmployeeId) {
+    if (!hasSourceEmployeeId) {
       addIssue(
         makeIssue(
           "missing_employee_id",
@@ -576,9 +617,18 @@ function parseLongCandidate(
         ),
       );
     }
-    if (!sourceEmployeeId && !sourceEmployeeName) {
+    if (!hasSourceEmployeeId && !sourceEmployeeName.trim()) {
       addIssue(
         makeIssue("missing_value", "No employee identifier or name was found.", rowNumber, null),
+      );
+    } else if (identity.method === "ambiguous_name") {
+      addIssue(
+        makeIssue(
+          "ambiguous_employee",
+          "This name matches more than one employee. Choose the correct person.",
+          rowNumber,
+          sourceEmployeeName,
+        ),
       );
     } else if (!employee) {
       addIssue(
@@ -586,7 +636,7 @@ function parseLongCandidate(
           "unknown_employee",
           "The source employee does not match the staff directory. Map this row before import.",
           rowNumber,
-          sourceEmployeeId || sourceEmployeeName,
+          sourceEmployeeId.trim() || sourceEmployeeName,
         ),
       );
     }
@@ -625,7 +675,7 @@ function parseLongCandidate(
           "duplicate",
           "The source contains more than one assignment for this employee and date.",
           rowNumber,
-          `${date ?? ""} · ${sourceEmployeeId || sourceEmployeeName}`,
+          `${date ?? ""} · ${sourceEmployeeId.trim() || sourceEmployeeName}`,
         ),
       );
     }
@@ -633,10 +683,12 @@ function parseLongCandidate(
     records.push({
       rowNumber,
       date,
-      sourceEmployeeId: sourceEmployeeId || null,
+      sourceEmployeeId: hasSourceEmployeeId ? sourceEmployeeId : null,
       sourceEmployeeName,
+      sourceDepartment,
+      sourceRole,
       employeeId: employee?.id ?? null,
-      employeeCode: employee?.employeeCode ?? (sourceEmployeeId || null),
+      employeeCode: employee?.employeeCode ?? (sourceEmployeeId.trim() || null),
       employeeName: employee?.fullName ?? (sourceEmployeeName || "Unmatched employee"),
       departmentId,
       shiftTypeId: shift?.id ?? null,
@@ -646,7 +698,7 @@ function parseLongCandidate(
       valid: Boolean(
         employee &&
           departmentId &&
-          sourceEmployeeId &&
+          hasSourceEmployeeId &&
           date &&
           shift &&
           !duplicate,
@@ -799,31 +851,26 @@ export async function parseRosterWorkbook(
     );
   }
   const layout = detectColumns(worksheet, selectedCandidate, requestedMapping);
-  const columns = layout.headers.map(
-    (header, index) => header || columnLabel(index + 1),
-  );
+  const columns = layout.headers.map((_, index) => columnLabel(index + 1));
   const resolvedMapping: ImportMapping = {
     format: "wide",
     employeeIdColumn: layout.employeeIdColumn
-      ? layout.headers[layout.employeeIdColumn - 1] || columnLabel(layout.employeeIdColumn)
+      ? columnLabel(layout.employeeIdColumn)
       : null,
     employeeNameColumn: layout.employeeNameColumn
-      ? layout.headers[layout.employeeNameColumn - 1] || columnLabel(layout.employeeNameColumn)
+      ? columnLabel(layout.employeeNameColumn)
+      : null,
+    employeeRoleColumn: layout.roleColumn
+      ? columnLabel(layout.roleColumn)
       : null,
     departmentColumn: layout.departmentColumn
-      ? layout.headers[layout.departmentColumn - 1] || columnLabel(layout.departmentColumn)
+      ? columnLabel(layout.departmentColumn)
       : null,
     dateColumn: null,
     shiftCodeColumn: null,
     worksheetName: worksheet.name,
   };
 
-  const employeeByCode = new Map(
-    employees.map((employee) => [normalize(employee.employeeCode), employee]),
-  );
-  const employeeByName = new Map(
-    employees.map((employee) => [normalize(employee.fullName), employee]),
-  );
   const shiftByCode = new Map(
     shiftTypes.flatMap((shift) => [
       [normalize(shift.code), shift] as const,
@@ -842,6 +889,7 @@ export async function parseRosterWorkbook(
     issues.push(item);
   };
   let currentDepartmentId: string | null = null;
+  let currentDepartmentSource = "";
   for (
     let rowNumber = selectedCandidate.headerRow + 1;
     rowNumber <= worksheet.rowCount;
@@ -849,17 +897,20 @@ export async function parseRosterWorkbook(
   ) {
     const row = worksheet.getRow(rowNumber);
     const sourceEmployeeId = layout.employeeIdColumn
-      ? rawCellText(row.getCell(layout.employeeIdColumn).value).trim()
+      ? rawCellText(row.getCell(layout.employeeIdColumn).value)
       : "";
+    const hasSourceEmployeeId = Boolean(sourceEmployeeId.trim());
     const sourceEmployeeName = layout.employeeNameColumn
       ? rawCellText(row.getCell(layout.employeeNameColumn).value)
       : "";
     const roleValue = layout.roleColumn
-      ? cellText(row.getCell(layout.roleColumn).value)
+      ? rawCellText(row.getCell(layout.roleColumn).value)
       : "";
     const departmentValue = layout.departmentColumn
-      ? cellText(row.getCell(layout.departmentColumn).value)
+      ? rawCellText(row.getCell(layout.departmentColumn).value)
       : "";
+    const identity = matchEmployeeIdentity(sourceEmployeeId, sourceEmployeeName, employees);
+    const employeeByNameMatch = identity.employee;
 
     const precedingValues = Array.from(
       { length: layout.firstDateColumn - 1 },
@@ -874,16 +925,19 @@ export async function parseRosterWorkbook(
       new Set(sectionMatches.map((department) => department.id)).size === 1
         ? sectionMatches[0]
         : undefined;
-    if (sectionDepartment) currentDepartmentId = sectionDepartment.id;
-    if (departmentValue) {
+    if (sectionDepartment) {
+      currentDepartmentId = sectionDepartment.id;
+      currentDepartmentSource = precedingValues[0] ?? sectionDepartment.code;
+    }
+    if (departmentValue.trim()) {
       const rowDepartment = matchDepartment(departmentValue, departments);
-      if (rowDepartment) currentDepartmentId = rowDepartment.id;
+      if (rowDepartment) {
+        currentDepartmentId = rowDepartment.id;
+        currentDepartmentSource = departmentValue;
+      }
     }
 
     const isDepartmentLabel = matchDepartment(sourceEmployeeName, departments);
-    const employeeByNameMatch = sourceEmployeeName.trim()
-      ? employeeByName.get(normalize(sourceEmployeeName.trim()))
-      : undefined;
     const recognizedShiftCount = selectedCandidate.dateColumns.filter(({ column }) => {
       const rawShiftValue = rawCellText(row.getCell(column).value);
       if (!rawShiftValue.trim()) return false;
@@ -892,24 +946,27 @@ export async function parseRosterWorkbook(
     }).length;
     const hasRosterValues = recognizedShiftCount >= 2;
     const isEmployeeRow = Boolean(
-      (sourceEmployeeId || sourceEmployeeName) &&
+      (hasSourceEmployeeId || sourceEmployeeName.trim()) &&
         !isDepartmentLabel &&
-        (sourceEmployeeId || roleValue || employeeByNameMatch || hasRosterValues),
+        (hasSourceEmployeeId || roleValue || employeeByNameMatch || hasRosterValues),
     );
     if (!isEmployeeRow) continue;
 
     const name = sourceEmployeeName.trim();
-    const employeeById = sourceEmployeeId
-      ? employeeByCode.get(normalize(sourceEmployeeId))
-      : undefined;
-    const employee = sourceEmployeeId ? employeeById : employeeByNameMatch;
-    const departmentId = employee?.departmentId ?? currentDepartmentId ?? null;
+    const employee = employeeByNameMatch;
+    const roleDepartment = matchDepartmentFromRole(roleValue, departments);
     const sourceDepartment =
-      departmentValue ||
-      departments.find((department) => department.id === currentDepartmentId)?.code ||
+      (departmentValue.trim() ? departmentValue : "") ||
+      currentDepartmentSource ||
+      roleDepartment?.code ||
       "";
+    const departmentId =
+      employee?.departmentId ??
+      currentDepartmentId ??
+      roleDepartment?.id ??
+      null;
 
-    if (!sourceEmployeeId) {
+    if (!hasSourceEmployeeId) {
       addIssue(
         makeIssue(
           "missing_employee_id",
@@ -953,13 +1010,22 @@ export async function parseRosterWorkbook(
         ),
       );
     }
-    if (!employee) {
+    if (identity.method === "ambiguous_name") {
+      addIssue(
+        makeIssue(
+          "ambiguous_employee",
+          "This name matches more than one employee. Choose the correct person.",
+          rowNumber,
+          name || null,
+        ),
+      );
+    } else if (!employee) {
       addIssue(
         makeIssue(
           "unknown_employee",
           "The source employee does not match the staff directory. Map this row before import.",
           rowNumber,
-          sourceEmployeeId || name || null,
+          sourceEmployeeId.trim() || name || null,
         ),
       );
     }
@@ -969,7 +1035,7 @@ export async function parseRosterWorkbook(
       const rawShiftValue = rawCellText(cell.value);
       const shiftCode = normalizeShiftValue(rawShiftValue);
       const shift = shiftByCode.get(normalize(shiftCode));
-      const duplicateKey = `${date}:${employee?.id ?? normalize(sourceEmployeeId || name)}`;
+      const duplicateKey = `${date}:${employee?.id ?? normalize(sourceEmployeeId.trim() || name)}`;
       const duplicate = duplicateKeys.has(duplicateKey);
       duplicateKeys.add(duplicateKey);
 
@@ -989,7 +1055,7 @@ export async function parseRosterWorkbook(
             "duplicate",
             "The source contains more than one assignment for this employee and date.",
             rowNumber,
-            `${date} · ${sourceEmployeeId || name}`,
+            `${date} · ${sourceEmployeeId.trim() || name}`,
           ),
         );
       }
@@ -998,10 +1064,12 @@ export async function parseRosterWorkbook(
       records.push({
         rowNumber,
         date,
-        sourceEmployeeId: sourceEmployeeId || null,
+        sourceEmployeeId: hasSourceEmployeeId ? sourceEmployeeId : null,
         sourceEmployeeName: sourceEmployeeName,
+        sourceDepartment,
+        sourceRole: roleValue,
         employeeId: employee?.id ?? null,
-        employeeCode: employee?.employeeCode ?? (sourceEmployeeId || null),
+        employeeCode: employee?.employeeCode ?? (sourceEmployeeId.trim() || null),
         employeeName: employee?.fullName ?? (name || "Unmatched employee"),
         departmentId,
         shiftTypeId: shift?.id ?? null,
@@ -1011,7 +1079,7 @@ export async function parseRosterWorkbook(
         valid: Boolean(
           employee &&
             departmentId &&
-            sourceEmployeeId &&
+            hasSourceEmployeeId &&
             !rowHasInvalidShift &&
             !duplicate,
         ),

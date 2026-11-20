@@ -6,9 +6,11 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { EmployeeResolution } from './employeeResolution';
+import type { NewEmployeeResolution } from './newEmployeeResolution';
 import type { ShiftCodeResolution } from './shiftCodeResolution';
 
 export interface ImportResolutionInput {
   employees: EmployeeResolution[];
+  newEmployees: NewEmployeeResolution[];
   shiftCodes: ShiftCodeResolution[];
 }

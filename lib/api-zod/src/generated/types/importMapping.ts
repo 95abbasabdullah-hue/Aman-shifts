@@ -14,6 +14,8 @@ export interface ImportMapping {
   /** @nullable */
   employeeNameColumn: string | null;
   /** @nullable */
+  employeeRoleColumn: string | null;
+  /** @nullable */
   departmentColumn: string | null;
   /** @nullable */
   dateColumn: string | null;

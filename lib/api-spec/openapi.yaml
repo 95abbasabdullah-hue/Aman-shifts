@@ -753,7 +753,7 @@ components:
     ImportIssue:
       type: object
       properties:
-        code: { type: string, enum: [unknown_employee, unknown_shift, unknown_department, missing_employee_id, competing_schedules, duplicate, invalid_date, missing_value, unsupported_sheet] }
+        code: { type: string, enum: [unknown_employee, ambiguous_employee, unknown_shift, unknown_department, missing_employee_id, competing_schedules, duplicate, invalid_date, missing_value, unsupported_sheet] }
         message: { type: string }
         rowNumber: { type: ["integer", "null"] }
         value: { type: ["string", "null"] }
@@ -764,11 +764,12 @@ components:
         format: { type: string, enum: [auto, wide, long] }
         employeeIdColumn: { type: ["string", "null"] }
         employeeNameColumn: { type: ["string", "null"] }
+        employeeRoleColumn: { type: ["string", "null"] }
         departmentColumn: { type: ["string", "null"] }
         dateColumn: { type: ["string", "null"] }
         shiftCodeColumn: { type: ["string", "null"] }
         worksheetName: { type: ["string", "null"] }
-      required: [format, employeeIdColumn, employeeNameColumn, departmentColumn, dateColumn, shiftCodeColumn, worksheetName]
+      required: [format, employeeIdColumn, employeeNameColumn, employeeRoleColumn, departmentColumn, dateColumn, shiftCodeColumn, worksheetName]
     StagedAssignment:
       type: object
       properties:
@@ -776,6 +777,8 @@ components:
         date: { type: ["string", "null"], format: date }
         sourceEmployeeId: { type: ["string", "null"] }
         sourceEmployeeName: { type: string }
+        sourceDepartment: { type: string }
+        sourceRole: { type: string }
         employeeId: { type: ["string", "null"] }
         employeeCode: { type: ["string", "null"] }
         employeeName: { type: string }
@@ -785,7 +788,7 @@ components:
         rawShiftValue: { type: string }
         shiftName: { type: ["string", "null"] }
         valid: { type: boolean }
-      required: [rowNumber, date, sourceEmployeeId, sourceEmployeeName, employeeId, employeeCode, employeeName, departmentId, shiftTypeId, shiftCode, rawShiftValue, shiftName, valid]
+      required: [rowNumber, date, sourceEmployeeId, sourceEmployeeName, sourceDepartment, sourceRole, employeeId, employeeCode, employeeName, departmentId, shiftTypeId, shiftCode, rawShiftValue, shiftName, valid]
     ImportPreview:
       type: object
       properties:
@@ -819,7 +822,15 @@ components:
       properties:
         rowNumber: { type: integer, minimum: 1 }
         employeeId: { type: string }
+        rememberAlias: { type: boolean, default: false }
       required: [rowNumber, employeeId]
+    NewEmployeeResolution:
+      type: object
+      properties:
+        rowNumber: { type: integer, minimum: 1 }
+        jobTitle: { type: string, minLength: 1, maxLength: 120 }
+        departmentId: { type: string }
+      required: [rowNumber, jobTitle, departmentId]
     ShiftCodeResolution:
       type: object
       properties:
@@ -832,10 +843,13 @@ components:
         employees:
           type: array
           items: { $ref: "#/components/schemas/EmployeeResolution" }
+        newEmployees:
+          type: array
+          items: { $ref: "#/components/schemas/NewEmployeeResolution" }
         shiftCodes:
           type: array
           items: { $ref: "#/components/schemas/ShiftCodeResolution" }
-      required: [employees, shiftCodes]
+      required: [employees, newEmployees, shiftCodes]
     ConfirmRosterImportInput:
       type: object
       properties:

@@ -361,6 +361,7 @@ export type ImportIssueCode = typeof ImportIssueCode[keyof typeof ImportIssueCod
 
 export const ImportIssueCode = {
   unknown_employee: 'unknown_employee',
+  ambiguous_employee: 'ambiguous_employee',
   unknown_shift: 'unknown_shift',
   unknown_department: 'unknown_department',
   missing_employee_id: 'missing_employee_id',
@@ -396,6 +397,8 @@ export interface ImportMapping {
   /** @nullable */
   employeeNameColumn: string | null;
   /** @nullable */
+  employeeRoleColumn: string | null;
+  /** @nullable */
   departmentColumn: string | null;
   /** @nullable */
   dateColumn: string | null;
@@ -412,6 +415,8 @@ export interface StagedAssignment {
   /** @nullable */
   sourceEmployeeId: string | null;
   sourceEmployeeName: string;
+  sourceDepartment: string;
+  sourceRole: string;
   /** @nullable */
   employeeId: string | null;
   /** @nullable */
@@ -455,6 +460,18 @@ export interface EmployeeResolution {
   /** @minimum 1 */
   rowNumber: number;
   employeeId: string;
+  rememberAlias?: boolean;
+}
+
+export interface NewEmployeeResolution {
+  /** @minimum 1 */
+  rowNumber: number;
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  jobTitle: string;
+  departmentId: string;
 }
 
 export interface ShiftCodeResolution {
@@ -464,6 +481,7 @@ export interface ShiftCodeResolution {
 
 export interface ImportResolutionInput {
   employees: EmployeeResolution[];
+  newEmployees: NewEmployeeResolution[];
   shiftCodes: ShiftCodeResolution[];
 }
 

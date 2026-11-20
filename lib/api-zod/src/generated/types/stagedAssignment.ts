@@ -13,6 +13,8 @@ export interface StagedAssignment {
   /** @nullable */
   sourceEmployeeId: string | null;
   sourceEmployeeName: string;
+  sourceDepartment: string;
+  sourceRole: string;
   /** @nullable */
   employeeId: string | null;
   /** @nullable */

@@ -7,6 +7,7 @@
  */
 
 export * from './activityItem';
+export * from './apiError';
 export * from './assignmentInput';
 export * from './assignmentUpdate';
 export * from './confirmRosterImportInput';
@@ -43,6 +44,8 @@ export * from './rosterImportPreviewInput';
 export * from './rosterImportStatus';
 export * from './rosterVersion';
 export * from './rosterVersionStatus';
+export * from './scheduleReadError';
+export * from './scheduleReadErrorCode';
 export * from './scheduleResponse';
 export * from './scheduleResponseStatus';
 export * from './shiftAssignment';

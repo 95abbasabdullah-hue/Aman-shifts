@@ -26,6 +26,7 @@ import type {
 
 import type {
   ActivityItem,
+  ApiError,
   AssignmentInput,
   AssignmentUpdate,
   ConfirmRosterImportInput,
@@ -51,6 +52,7 @@ import type {
   RosterImport,
   RosterImportPreviewInput,
   RosterVersion,
+  ScheduleReadError,
   ScheduleResponse,
   ShiftAssignment,
   ShiftType,
@@ -1385,7 +1387,7 @@ export const getGetMonthlyScheduleQueryKey = (params?: GetMonthlyScheduleParams,
     }
 
 
-export const getGetMonthlyScheduleQueryOptions = <TData = Awaited<ReturnType<typeof getMonthlySchedule>>, TError = ErrorType<unknown>>(params: GetMonthlyScheduleParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonthlySchedule>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+export const getGetMonthlyScheduleQueryOptions = <TData = Awaited<ReturnType<typeof getMonthlySchedule>>, TError = ErrorType<ApiError | ScheduleReadError>>(params: GetMonthlyScheduleParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonthlySchedule>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -1404,10 +1406,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetMonthlyScheduleQueryResult = NonNullable<Awaited<ReturnType<typeof getMonthlySchedule>>>
-export type GetMonthlyScheduleQueryError = ErrorType<unknown>
+export type GetMonthlyScheduleQueryError = ErrorType<ApiError | ScheduleReadError>
 
 
-export function useGetMonthlySchedule<TData = Awaited<ReturnType<typeof getMonthlySchedule>>, TError = ErrorType<unknown>>(
+export function useGetMonthlySchedule<TData = Awaited<ReturnType<typeof getMonthlySchedule>>, TError = ErrorType<ApiError | ScheduleReadError>>(
  params: GetMonthlyScheduleParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonthlySchedule>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getMonthlySchedule>>,
@@ -1417,7 +1419,7 @@ export function useGetMonthlySchedule<TData = Awaited<ReturnType<typeof getMonth
       >, request?: SecondParameter<typeof customFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetMonthlySchedule<TData = Awaited<ReturnType<typeof getMonthlySchedule>>, TError = ErrorType<unknown>>(
+export function useGetMonthlySchedule<TData = Awaited<ReturnType<typeof getMonthlySchedule>>, TError = ErrorType<ApiError | ScheduleReadError>>(
  params: GetMonthlyScheduleParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonthlySchedule>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getMonthlySchedule>>,
@@ -1427,7 +1429,7 @@ export function useGetMonthlySchedule<TData = Awaited<ReturnType<typeof getMonth
       >, request?: SecondParameter<typeof customFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetMonthlySchedule<TData = Awaited<ReturnType<typeof getMonthlySchedule>>, TError = ErrorType<unknown>>(
+export function useGetMonthlySchedule<TData = Awaited<ReturnType<typeof getMonthlySchedule>>, TError = ErrorType<ApiError | ScheduleReadError>>(
  params: GetMonthlyScheduleParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonthlySchedule>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -1435,7 +1437,7 @@ export function useGetMonthlySchedule<TData = Awaited<ReturnType<typeof getMonth
  * @summary Get the schedule visible to the signed-in user
  */
 
-export function useGetMonthlySchedule<TData = Awaited<ReturnType<typeof getMonthlySchedule>>, TError = ErrorType<unknown>>(
+export function useGetMonthlySchedule<TData = Awaited<ReturnType<typeof getMonthlySchedule>>, TError = ErrorType<ApiError | ScheduleReadError>>(
  params: GetMonthlyScheduleParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMonthlySchedule>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
  , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -1493,7 +1495,7 @@ export const getGetMyScheduleQueryKey = (params?: GetMyScheduleParams,) => {
     }
 
 
-export const getGetMyScheduleQueryOptions = <TData = Awaited<ReturnType<typeof getMySchedule>>, TError = ErrorType<unknown>>(params: GetMyScheduleParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMySchedule>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+export const getGetMyScheduleQueryOptions = <TData = Awaited<ReturnType<typeof getMySchedule>>, TError = ErrorType<ApiError | ScheduleReadError>>(params: GetMyScheduleParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMySchedule>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -1512,10 +1514,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetMyScheduleQueryResult = NonNullable<Awaited<ReturnType<typeof getMySchedule>>>
-export type GetMyScheduleQueryError = ErrorType<unknown>
+export type GetMyScheduleQueryError = ErrorType<ApiError | ScheduleReadError>
 
 
-export function useGetMySchedule<TData = Awaited<ReturnType<typeof getMySchedule>>, TError = ErrorType<unknown>>(
+export function useGetMySchedule<TData = Awaited<ReturnType<typeof getMySchedule>>, TError = ErrorType<ApiError | ScheduleReadError>>(
  params: GetMyScheduleParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMySchedule>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getMySchedule>>,
@@ -1525,7 +1527,7 @@ export function useGetMySchedule<TData = Awaited<ReturnType<typeof getMySchedule
       >, request?: SecondParameter<typeof customFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetMySchedule<TData = Awaited<ReturnType<typeof getMySchedule>>, TError = ErrorType<unknown>>(
+export function useGetMySchedule<TData = Awaited<ReturnType<typeof getMySchedule>>, TError = ErrorType<ApiError | ScheduleReadError>>(
  params: GetMyScheduleParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMySchedule>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getMySchedule>>,
@@ -1535,7 +1537,7 @@ export function useGetMySchedule<TData = Awaited<ReturnType<typeof getMySchedule
       >, request?: SecondParameter<typeof customFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetMySchedule<TData = Awaited<ReturnType<typeof getMySchedule>>, TError = ErrorType<unknown>>(
+export function useGetMySchedule<TData = Awaited<ReturnType<typeof getMySchedule>>, TError = ErrorType<ApiError | ScheduleReadError>>(
  params: GetMyScheduleParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMySchedule>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -1543,7 +1545,7 @@ export function useGetMySchedule<TData = Awaited<ReturnType<typeof getMySchedule
  * @summary Get the signed-in employee's schedule
  */
 
-export function useGetMySchedule<TData = Awaited<ReturnType<typeof getMySchedule>>, TError = ErrorType<unknown>>(
+export function useGetMySchedule<TData = Awaited<ReturnType<typeof getMySchedule>>, TError = ErrorType<ApiError | ScheduleReadError>>(
  params: GetMyScheduleParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMySchedule>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
  , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
@@ -2149,7 +2151,7 @@ export const getGetRosterVersionScheduleQueryKey = (versionId: string,) => {
     }
 
 
-export const getGetRosterVersionScheduleQueryOptions = <TData = Awaited<ReturnType<typeof getRosterVersionSchedule>>, TError = ErrorType<unknown>>(versionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRosterVersionSchedule>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+export const getGetRosterVersionScheduleQueryOptions = <TData = Awaited<ReturnType<typeof getRosterVersionSchedule>>, TError = ErrorType<ScheduleReadError>>(versionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRosterVersionSchedule>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -2168,10 +2170,10 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetRosterVersionScheduleQueryResult = NonNullable<Awaited<ReturnType<typeof getRosterVersionSchedule>>>
-export type GetRosterVersionScheduleQueryError = ErrorType<unknown>
+export type GetRosterVersionScheduleQueryError = ErrorType<ScheduleReadError>
 
 
-export function useGetRosterVersionSchedule<TData = Awaited<ReturnType<typeof getRosterVersionSchedule>>, TError = ErrorType<unknown>>(
+export function useGetRosterVersionSchedule<TData = Awaited<ReturnType<typeof getRosterVersionSchedule>>, TError = ErrorType<ScheduleReadError>>(
  versionId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRosterVersionSchedule>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getRosterVersionSchedule>>,
@@ -2181,7 +2183,7 @@ export function useGetRosterVersionSchedule<TData = Awaited<ReturnType<typeof ge
       >, request?: SecondParameter<typeof customFetch>}
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetRosterVersionSchedule<TData = Awaited<ReturnType<typeof getRosterVersionSchedule>>, TError = ErrorType<unknown>>(
+export function useGetRosterVersionSchedule<TData = Awaited<ReturnType<typeof getRosterVersionSchedule>>, TError = ErrorType<ScheduleReadError>>(
  versionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRosterVersionSchedule>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getRosterVersionSchedule>>,
@@ -2191,7 +2193,7 @@ export function useGetRosterVersionSchedule<TData = Awaited<ReturnType<typeof ge
       >, request?: SecondParameter<typeof customFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-export function useGetRosterVersionSchedule<TData = Awaited<ReturnType<typeof getRosterVersionSchedule>>, TError = ErrorType<unknown>>(
+export function useGetRosterVersionSchedule<TData = Awaited<ReturnType<typeof getRosterVersionSchedule>>, TError = ErrorType<ScheduleReadError>>(
  versionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRosterVersionSchedule>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
@@ -2199,7 +2201,7 @@ export function useGetRosterVersionSchedule<TData = Awaited<ReturnType<typeof ge
  * @summary Get assignments from a specific roster version
  */
 
-export function useGetRosterVersionSchedule<TData = Awaited<ReturnType<typeof getRosterVersionSchedule>>, TError = ErrorType<unknown>>(
+export function useGetRosterVersionSchedule<TData = Awaited<ReturnType<typeof getRosterVersionSchedule>>, TError = ErrorType<ScheduleReadError>>(
  versionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRosterVersionSchedule>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
  , queryClient?: QueryClient
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {

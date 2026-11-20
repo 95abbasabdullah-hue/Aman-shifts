@@ -1,4 +1,10 @@
-import { Router, type IRouter } from "express";
+import {
+  Router,
+  type IRouter,
+  type Request,
+  type RequestHandler,
+  type Response,
+} from "express";
 import {
   and,
   asc,
@@ -59,6 +65,56 @@ function periodForMonth(month: string): { start: string; end: string } {
   return {
     start: `${month}-01`,
     end: `${month}-${String(lastDay).padStart(2, "0")}`,
+  };
+}
+
+function isValidScheduleMonth(month: string): boolean {
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const monthNumber = Number(match[2]);
+  return year > 0 && monthNumber >= 1 && monthNumber <= 12;
+}
+
+export function scheduleReadFailure(error: unknown): {
+  status: 500 | 503;
+  body: { error: string; code: string };
+} {
+  const code =
+    error && typeof error === "object"
+      ? (error as { code?: unknown }).code
+      : undefined;
+  const databaseUnavailable =
+    typeof code === "string" &&
+    (/^(08|53|57|58)/i.test(code) ||
+      /^(ECONN|EHOST|ETIMEDOUT)/i.test(code));
+  if (databaseUnavailable) {
+    return {
+      status: 503,
+      body: {
+        error: "Schedule data is temporarily unavailable. Try again shortly.",
+        code: "schedule_database_unavailable",
+      },
+    };
+  }
+  return {
+    status: 500,
+    body: {
+      error: "A server error prevented the schedule from loading. Try again.",
+      code: "schedule_load_failed",
+    },
+  };
+}
+
+export function withScheduleReadErrors(handler: RequestHandler): RequestHandler {
+  return async (req, res, next): Promise<void> => {
+    try {
+      await handler(req, res, next);
+    } catch (error) {
+      req.log.error({ err: error }, "Could not load schedule data");
+      const failure = scheduleReadFailure(error);
+      res.status(failure.status).json(failure.body);
+    }
   };
 }
 
@@ -378,54 +434,66 @@ router.get(
   },
 );
 
-router.get("/schedule/month", async (req, res): Promise<void> => {
-  const query = GetMonthlyScheduleQueryParams.safeParse(req.query);
-  if (!query.success) {
-    res.status(400).json({ error: query.error.message });
-    return;
-  }
-  const user = currentAppUser(req);
-  const version = await visibleVersion(query.data.month, user.role === "admin");
-  const assignments = version
-    ? await scheduleAssignments(
-        version.id,
-        query.data.departmentId,
-        undefined,
-        query.data.month,
-      )
-    : [];
-  res.json(
-    GetMonthlyScheduleResponse.parse(
-      schedulePayload(query.data.month, version ?? null, assignments),
-    ),
-  );
-});
-
-router.get("/schedule/mine", async (req, res): Promise<void> => {
-  const query = GetMyScheduleQueryParams.safeParse(req.query);
-  if (!query.success) {
-    res.status(400).json({ error: query.error.message });
-    return;
-  }
-  const user = currentAppUser(req);
-  const version = (await versionsForMonth(query.data.month)).find(
-    (candidate) => candidate.status === "published",
-  );
-  const assignments =
-    version && user.employeeId
+router.get(
+  "/schedule/month",
+  withScheduleReadErrors(async (req, res): Promise<void> => {
+    const query = GetMonthlyScheduleQueryParams.safeParse(req.query);
+    if (!query.success || !isValidScheduleMonth(query.data.month)) {
+      res.status(400).json({
+        error: "Choose a valid schedule month in YYYY-MM format.",
+        code: "invalid_schedule_period",
+      });
+      return;
+    }
+    const user = currentAppUser(req);
+    const version = await visibleVersion(query.data.month, user.role === "admin");
+    const assignments = version
       ? await scheduleAssignments(
           version.id,
+          query.data.departmentId,
           undefined,
-          user.employeeId,
           query.data.month,
         )
       : [];
-  res.json(
-    GetMyScheduleResponse.parse(
-      schedulePayload(query.data.month, version ?? null, assignments),
-    ),
-  );
-});
+    res.json(
+      GetMonthlyScheduleResponse.parse(
+        schedulePayload(query.data.month, version ?? null, assignments),
+      ),
+    );
+  }),
+);
+
+router.get(
+  "/schedule/mine",
+  withScheduleReadErrors(async (req, res): Promise<void> => {
+    const query = GetMyScheduleQueryParams.safeParse(req.query);
+    if (!query.success || !isValidScheduleMonth(query.data.month)) {
+      res.status(400).json({
+        error: "Choose a valid schedule month in YYYY-MM format.",
+        code: "invalid_schedule_period",
+      });
+      return;
+    }
+    const user = currentAppUser(req);
+    const version = (await versionsForMonth(query.data.month)).find(
+      (candidate) => candidate.status === "published",
+    );
+    const assignments =
+      version && user.employeeId
+        ? await scheduleAssignments(
+            version.id,
+            undefined,
+            user.employeeId,
+            query.data.month,
+          )
+        : [];
+    res.json(
+      GetMyScheduleResponse.parse(
+        schedulePayload(query.data.month, version ?? null, assignments),
+      ),
+    );
+  }),
+);
 
 router.get(
   "/roster-versions",
@@ -521,7 +589,7 @@ router.post(
 router.get(
   "/roster-versions/:versionId/schedule",
   requireAdmin,
-  async (req, res): Promise<void> => {
+  withScheduleReadErrors(async (req: Request, res: Response): Promise<void> => {
     const params = GetRosterVersionScheduleParams.safeParse(req.params);
     if (!params.success) {
       res.status(400).json({ error: params.error.message });
@@ -538,7 +606,7 @@ router.get(
         schedulePayload(version.month, version, assignments),
       ),
     );
-  },
+  }),
 );
 
 router.post(

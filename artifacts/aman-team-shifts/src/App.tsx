@@ -55,6 +55,28 @@ function previewErrorMessage(error: unknown): string {
   }
   return 'The roster could not be previewed. Check the workbook and retry.';
 }
+function scheduleErrorMessage(error: unknown): string {
+  const status = error && typeof error === 'object'
+    ? (error as { status?: unknown }).status
+    : undefined;
+  const data = error && typeof error === 'object'
+    ? (error as { data?: unknown }).data
+    : undefined;
+  const code = data && typeof data === 'object'
+    ? (data as { code?: unknown }).code
+    : undefined;
+  if (status === 401) return 'Sign in again to load the schedule.';
+  if (status === 403) return 'Your account does not have access to this schedule.';
+  if (code === 'invalid_schedule_period') return 'Choose a valid month to view the schedule.';
+  if (code === 'schedule_database_unavailable') return 'Schedule storage is temporarily unavailable. Try again shortly.';
+  if (code === 'schedule_load_failed') return 'A server error prevented the schedule from loading. Please retry.';
+  if (data && typeof data === 'object') {
+    const message = (data as { error?: unknown }).error;
+    if (typeof message === 'string' && message.trim()) return message;
+  }
+  if (error instanceof TypeError) return 'Could not reach the schedule service. Check your connection and retry.';
+  return 'The schedule could not be loaded. Please retry.';
+}
 const invalidate = (keys: readonly unknown[]) => queryClient.invalidateQueries({ queryKey: keys });
 const invalidateRosterReads = () => {
   invalidate(getGetMonthlyScheduleQueryKey());
@@ -296,6 +318,7 @@ function SchedulePage({mine=false}:{mine?:boolean}) {
   const schedule=mine?mineQuery.data:teamQuery.data;
   const isLoading=mine?mineQuery.isLoading:teamQuery.isLoading;
   const isError=mine?mineQuery.isError:teamQuery.isError;
+  const scheduleError=mine?mineQuery.error:teamQuery.error;
   const refetch=mine?mineQuery.refetch:teamQuery.refetch;
   const {data:user}=useGetCurrentUser();
   const [editAssignment,setEditAssignment]=useState<ShiftAssignment|null|false>(false);
@@ -327,7 +350,8 @@ function SchedulePage({mine=false}:{mine?:boolean}) {
         <option value="">All departments</option>{departments.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select><ChevronDown size={15}/></label>}
       {admin && !mine && <button className="button button-primary" disabled={schedule?.status!=='draft'||!schedule.versionId} onClick={()=>setEditAssignment(null)} data-testid="button-add-assignment"><Plus size={16}/> Add shift</button>}
     </div>
-    {isLoading?<SpinnerBlock/>:isError||!schedule?<QueryError retry={()=>refetch()}/>:<>
+     {isLoading?<SpinnerBlock/>:isError||!schedule?<QueryError message={scheduleErrorMessage(scheduleError)} retry={()=>refetch()}/>:!schedule.versionId&&schedule.assignments.length===0?
+       <EmptyState title="No published schedule available for this period." detail="Your scheduling team has not published a roster for this month yet."/>:<>
       <div className="calendar-strip"><div className="calendar-strip-head">{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=><span key={d}>{d}</span>)}</div>
          <div className="calendar-date-grid">{Array.from({length:leadingCells},(_,i)=><span className="calendar-leading-cell" aria-hidden="true" key={`blank-${i}`}/>)}{dates.map(d=>{const count=schedule.assignments.filter(a=>a.date===d&&a.isWorking).length;const chosen=d===selectedDate;
           return <button key={d} className={`calendar-date ${chosen?'chosen':''}`} onClick={()=>setSelectedDate(d)} data-testid={`button-date-${d}`}>

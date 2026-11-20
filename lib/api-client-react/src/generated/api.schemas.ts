@@ -303,6 +303,9 @@ export const ScheduleResponseStatus = {
   published: 'published',
 } as const;
 
+/**
+ * When no version overlaps the requested period, version fields are null and assignments is empty.
+ */
 export interface ScheduleResponse {
   month: string;
   status: ScheduleResponseStatus;
@@ -315,6 +318,23 @@ export interface ScheduleResponse {
   /** @nullable */
   periodEnd: string | null;
   assignments: ShiftAssignment[];
+}
+
+export interface ApiError {
+  error: string;
+}
+
+export type ScheduleReadErrorCode = typeof ScheduleReadErrorCode[keyof typeof ScheduleReadErrorCode];
+
+
+export const ScheduleReadErrorCode = {
+  schedule_database_unavailable: 'schedule_database_unavailable',
+  schedule_load_failed: 'schedule_load_failed',
+} as const;
+
+export interface ScheduleReadError {
+  error: string;
+  code: ScheduleReadErrorCode;
 }
 
 export type RosterImportStatus = typeof RosterImportStatus[keyof typeof RosterImportStatus];
@@ -576,7 +596,7 @@ activeOnly?: boolean;
 
 export type GetMonthlyScheduleParams = {
 /**
- * @pattern ^\d{4}-\d{2}$
+ * @pattern ^\d{4}-(0[1-9]|1[0-2])$
  */
 month: string;
 departmentId?: string;
@@ -584,7 +604,7 @@ departmentId?: string;
 
 export type GetMyScheduleParams = {
 /**
- * @pattern ^\d{4}-\d{2}$
+ * @pattern ^\d{4}-(0[1-9]|1[0-2])$
  */
 month: string;
 };

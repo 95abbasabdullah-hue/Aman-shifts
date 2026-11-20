@@ -362,7 +362,7 @@ export const UpdateShiftTypeResponse = zod.object({
 /**
  * @summary Get the schedule visible to the signed-in user
  */
-export const getMonthlyScheduleQueryMonthRegExp = new RegExp('^\\d{4}-\\d{2}$');
+export const getMonthlyScheduleQueryMonthRegExp = new RegExp('^\\d{4}-(0[1-9]|1[0-2])$');
 
 
 export const GetMonthlyScheduleQueryParams = zod.object({
@@ -394,13 +394,13 @@ export const GetMonthlyScheduleResponse = zod.object({
   "isWorking": zod.boolean(),
   "notes": zod.string().nullable()
 }))
-})
+}).describe('When no version overlaps the requested period, version fields are null and assignments is empty.')
 
 
 /**
  * @summary Get the signed-in employee's schedule
  */
-export const getMyScheduleQueryMonthRegExp = new RegExp('^\\d{4}-\\d{2}$');
+export const getMyScheduleQueryMonthRegExp = new RegExp('^\\d{4}-(0[1-9]|1[0-2])$');
 
 
 export const GetMyScheduleQueryParams = zod.object({
@@ -431,7 +431,7 @@ export const GetMyScheduleResponse = zod.object({
   "isWorking": zod.boolean(),
   "notes": zod.string().nullable()
 }))
-})
+}).describe('When no version overlaps the requested period, version fields are null and assignments is empty.')
 
 
 /**
@@ -725,7 +725,7 @@ export const GetRosterVersionScheduleResponse = zod.object({
   "isWorking": zod.boolean(),
   "notes": zod.string().nullable()
 }))
-})
+}).describe('When no version overlaps the requested period, version fields are null and assignments is empty.')
 
 
 /**

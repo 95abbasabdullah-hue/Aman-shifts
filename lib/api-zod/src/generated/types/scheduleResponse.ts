@@ -8,6 +8,9 @@
 import type { ScheduleResponseStatus } from './scheduleResponseStatus';
 import type { ShiftAssignment } from './shiftAssignment';
 
+/**
+ * When no version overlaps the requested period, version fields are null and assignments is empty.
+ */
 export interface ScheduleResponse {
   month: string;
   status: ScheduleResponseStatus;

@@ -563,7 +563,7 @@ function MyShiftList({assignments}:{assignments:ShiftAssignment[]}) {
 
 function displayShiftStatus(assignment:ShiftAssignment) {
   const sourceCode=assignment.shiftCode?.trim()??'';
-  const offDuty=!sourceCode||sourceCode==='/'||sourceCode.toUpperCase()==='BLANK';
+  const offDuty=!sourceCode||sourceCode.toUpperCase()==='BLANK';
   return {
     code:offDuty?'OFF':sourceCode,
     color:offDuty?'#E0E0E0':assignment.shiftColor,

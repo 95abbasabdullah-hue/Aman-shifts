@@ -17,8 +17,8 @@ description: User-provided scheduling, language, and demo-data constraints for A
 
 **How to apply:** Keep the workbook as a regression fixture; keep row-range assumptions out of general parser logic.
 
-- Team Shifts defaults to All Staff; `/` and blank source cells are treated as gray OFF, with raw workbook values retained for auditing.
+- Team Shifts defaults to All Staff; blank source cells display as OFF, while `/` remains a distinct unresolved, non-working status.
 
-**Why:** The user clarified that `/` means off duty and must not appear in the Team Shifts list.
+**Why:** The latest roster verification requirements explicitly distinguish `/` from OFF while preserving the original workbook value.
 
-**How to apply:** Keep OFF, leave, and other attendance statuses visible, exclude them from working counts, and preserve the raw source values.
+**How to apply:** Keep all attendance statuses visible, exclude them from working counts, retain raw workbook values, and do not convert `/` to OFF unless the user later changes this rule.

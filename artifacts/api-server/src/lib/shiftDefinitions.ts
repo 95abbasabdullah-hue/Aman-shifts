@@ -71,10 +71,12 @@ export const DEFAULT_SHIFT_DEFINITIONS: DefaultShiftDefinition[] = [
               ? "Requested Off"
               : code === "OFF"
                 ? "Off Day"
-                : "Off Day",
+                  : code === "/"
+                    ? "Unresolved attendance status"
+                    : "Off Day",
     meaning:
       code === "/"
-        ? "Legacy '/' source value; treated as off duty."
+        ? "Unresolved attendance code; meaning is not configured."
         : null,
     color:
       code === "EL"
@@ -101,9 +103,14 @@ export function normalizeShiftValue(rawValue: string): string {
   const trimmed = rawValue.trim();
   if (!trimmed) return "OFF";
   const upper = trimmed.toUpperCase();
-  if (upper === "/" || upper === "BLANK") return "OFF";
+  if (upper === "BLANK") return "OFF";
   if (upper === "D" || upper === "D*") return "D";
   if (upper === "N" || upper === "N*") return "N";
   if (KNOWN_CODES.has(upper)) return upper;
   return trimmed;
+}
+
+export function isBlankOffDutyAlias(code: string): boolean {
+  const normalized = code.trim().toUpperCase();
+  return !normalized || normalized === "BLANK";
 }

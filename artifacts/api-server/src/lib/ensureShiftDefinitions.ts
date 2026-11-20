@@ -24,24 +24,42 @@ export async function ensureShiftDefinitions(): Promise<void> {
   }
   for (const definition of attendanceDefinitions) {
     if (definition.code === "/") {
-      await db
-        .insert(shiftTypesTable)
-        .values(definition)
-        .onConflictDoUpdate({
-          target: shiftTypesTable.code,
-          set: {
+      const [existingSlashType] = await db
+        .select({
+          id: shiftTypesTable.id,
+          name: shiftTypesTable.name,
+          meaning: shiftTypesTable.meaning,
+        })
+        .from(shiftTypesTable)
+        .where(eq(shiftTypesTable.code, "/"))
+        .limit(1);
+      if (!existingSlashType) {
+        await db.insert(shiftTypesTable).values(definition);
+      } else {
+        const wasLegacyOffDayDefault =
+          existingSlashType.name === "Off Day" &&
+          existingSlashType.meaning ===
+            "Legacy '/' source value; treated as off duty.";
+        await db
+          .update(shiftTypesTable)
+          .set({
             category: "attendance",
-            name: definition.name,
-            meaning: definition.meaning,
-            color: definition.color,
-            displayCode: "/",
-            displayInCalendar: true,
+            ...(wasLegacyOffDayDefault
+              ? {
+                  name: definition.name,
+                  meaning: definition.meaning,
+                  color: definition.color,
+                  displayCode: "/",
+                  displayInCalendar: true,
+                }
+              : {}),
             startsAt: null,
             endsAt: null,
             active: true,
             updatedAt: new Date(),
-          },
-        });
+          })
+          .where(eq(shiftTypesTable.id, existingSlashType.id));
+      }
       continue;
     }
     await db

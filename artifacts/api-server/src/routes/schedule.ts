@@ -57,7 +57,10 @@ import {
 } from "@workspace/db";
 import { currentAppUser, requireAdmin } from "../lib/amanAuth";
 import { writeAuditLog } from "../lib/audit";
-import { DEFAULT_SHIFT_DEFINITIONS } from "../lib/shiftDefinitions";
+import {
+  DEFAULT_SHIFT_DEFINITIONS,
+  isBlankOffDutyAlias,
+} from "../lib/shiftDefinitions";
 
 const router: IRouter = Router();
 const offDayColor =
@@ -75,8 +78,7 @@ function scheduleAssignmentResponse<
 >(row: T) {
   const { fallbackShiftCode, ...assignment } = row;
   const sourceCode = assignment.shiftCode ?? fallbackShiftCode;
-  const isOffDutyAlias =
-    !sourceCode.trim() || ["/", "BLANK"].includes(sourceCode.trim().toUpperCase());
+  const isOffDutyAlias = isBlankOffDutyAlias(sourceCode);
   return {
     ...assignment,
     shiftCode: isOffDutyAlias ? "OFF" : sourceCode,

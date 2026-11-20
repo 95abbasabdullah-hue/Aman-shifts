@@ -8,7 +8,11 @@ import {
   type EmployeeReference,
   type ShiftReference,
 } from "./rosterImportParser";
-import { DEFAULT_SHIFT_DEFINITIONS, normalizeShiftValue } from "./shiftDefinitions";
+import {
+  DEFAULT_SHIFT_DEFINITIONS,
+  isBlankOffDutyAlias,
+  normalizeShiftValue,
+} from "./shiftDefinitions";
 import {
   matchEmployeeIdentity,
   normalizeEmployeeName,
@@ -184,7 +188,7 @@ test("official shift normalization trims aliases and keeps D1 separate", () => {
   assert.equal(normalizeShiftValue(" D1 "), "D1");
   assert.notEqual(normalizeShiftValue("D1"), normalizeShiftValue("D"));
   assert.equal(normalizeShiftValue("  "), "OFF");
-  assert.equal(normalizeShiftValue(" / "), "OFF");
+  assert.equal(normalizeShiftValue(" / "), "/");
   assert.equal(normalizeShiftValue(" OFF "), "OFF");
   assert.deepEqual(
     DEFAULT_SHIFT_DEFINITIONS.filter((shift) => shift.category === "working").map(
@@ -223,12 +227,18 @@ test("official shift normalization trims aliases and keeps D1 separate", () => {
     ],
   );
   assert.equal(attendance.get("/")?.code, "/");
-  assert.equal(attendance.get("/")?.name, "Off Day");
+  assert.equal(attendance.get("/")?.name, "Unresolved attendance status");
   assert.equal(attendance.get("/")?.color, "#E0E0E0");
   assert.equal(
     DEFAULT_SHIFT_DEFINITIONS.find((shift) => shift.code === "OFF")?.category,
     "attendance",
   );
+});
+
+test("only blank aliases display as OFF; slash remains a distinct status", () => {
+  assert.equal(isBlankOffDutyAlias(""), true);
+  assert.equal(isBlankOffDutyAlias("BLANK"), true);
+  assert.equal(isBlankOffDutyAlias(" / "), false);
 });
 
 test("employee resolution prefers exact IDs, then approved aliases, then unique names", () => {
@@ -461,11 +471,11 @@ test("unknown codes warn without aborting, and attendance remains non-working", 
       `${code} remains a non-working attendance status`,
     );
   }
-  assert.equal(normalizeShiftValue("/"), "OFF");
+  assert.equal(normalizeShiftValue("/"), "/");
   assert.equal(normalizeShiftValue(""), "OFF");
-  assert.equal(normalizeShiftValue("/"), normalizeShiftValue("OFF"));
+  assert.notEqual(normalizeShiftValue("/"), normalizeShiftValue("OFF"));
   const slashRecord = parsed.records.find((record) => record.rawShiftValue === "/");
-  assert.equal(slashRecord?.shiftCode, "OFF");
+  assert.equal(slashRecord?.shiftCode, "/");
   assert.equal(slashRecord?.rawShiftValue, "/", "preserve source value for auditing");
   assert.equal(
     shiftTypes.find((shift) => shift.code === "D1")?.category,
@@ -677,6 +687,58 @@ test(
     assert.ok(hcaAssignments.every((record) => record.sourceDepartment === "ED"));
     assert.ok(hcaAssignments.every((record) => record.sourceRole === "HCA"));
     assert.ok(!parsed.records.some((record) => record.rowNumber === 33));
+
+    const automaticPlan = prepareAutomaticRoster(parsed, {
+      employees: sourceEmployees.map((employee, index) => ({
+        ...employee,
+        jobTitle: rawExcelText(
+          sourceSheet.getRow(sourceRows[index]!).getCell(4).value,
+        ),
+        active: true,
+        aliases: [],
+      })),
+      departments: departments.map((department) => ({
+        ...department,
+        active: true,
+      })),
+      shiftTypes: DEFAULT_SHIFT_DEFINITIONS.map((definition) => ({
+        ...definition,
+        id: `shift-${definition.code}`,
+        active: true,
+      })),
+    });
+    assert.equal(automaticPlan.employees.length, 20);
+    assert.equal(automaticPlan.dates.length, 30);
+    assert.equal(automaticPlan.assignments.length, 600);
+    assert.equal(
+      automaticPlan.employees.filter(
+        (employee) => employee.departmentKey === "id:dept-ed",
+      ).length,
+      14,
+    );
+    assert.equal(
+      automaticPlan.employees.filter(
+        (employee) => employee.departmentKey === "id:dept-icu",
+      ).length,
+      6,
+    );
+    const plannedHca = automaticPlan.employees.find(
+      (employee) => employee.jobTitle === "Healthcare Assistant",
+    );
+    assert.equal(plannedHca?.departmentKey, "id:dept-ed");
+    assert.equal(automaticPlan.unknownShiftCounts.size, 0);
+    assert.equal(
+      automaticPlan.assignments.filter(
+        (assignment) => assignment.normalizedShiftCode === "/",
+      ).length,
+      156,
+    );
+    assert.equal(
+      automaticPlan.assignments.filter(
+        (assignment) => assignment.normalizedShiftCode === "OFF",
+      ).length,
+      105,
+    );
 
     const expectedRawCounts = new Map<string, number>();
     const normalizedCounts = new Map<string, number>();

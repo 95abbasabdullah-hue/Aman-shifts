@@ -684,10 +684,11 @@ test("schedule reads and publication lifecycle preserve cross-month history", as
         draftSchedule.assignments.some(
           (item) =>
             item.id === slashSource[0]!.id &&
-            item.shiftCode === "OFF" &&
+            item.shiftCode === "/" &&
+            item.shiftName === "Unresolved attendance status" &&
             item.shiftColor === "#E0E0E0",
         ),
-        "slash attendance is presented as gray OFF",
+        "slash attendance remains a separate non-working status",
       );
       assert.ok(
         draftSchedule.assignments.some(
@@ -1105,8 +1106,8 @@ test("schedule reads and publication lifecycle preserve cross-month history", as
           assignment.date === "2027-11-21",
       );
       assert.ok(slashAssignment);
-      assert.equal(slashAssignment.shiftCode, "OFF");
-      assert.equal(slashAssignment.shiftName, "Off Day");
+      assert.equal(slashAssignment.shiftCode, "/");
+      assert.equal(slashAssignment.shiftName, "Unresolved attendance status");
       assert.equal(slashAssignment.shiftColor, "#E0E0E0");
       assert.ok(savedRows.some((row) => row.raw === "/"));
       const unknownType = await db
@@ -1381,13 +1382,21 @@ test(
       assert.equal(
         importedAssignments.filter((item) => item.shiftCode === "OFF").length,
         (sourceRawCounts.get("") ?? 0) +
-          (sourceRawCounts.get("OFF") ?? 0) +
-          (sourceRawCounts.get("/") ?? 0),
+          (sourceRawCounts.get("OFF") ?? 0),
       );
       assert.ok((sourceRawCounts.get("/") ?? 0) > 0);
       assert.ok(
-        importedAssignments.every((item) => item.shiftCode !== "/"),
-        "slash values are shown as OFF in Team Shifts",
+        importedAssignments.some(
+          (item) =>
+            item.shiftCode === "/" &&
+            item.category === "attendance" &&
+            !item.isWorking,
+        ),
+        "slash values remain a separate non-working status",
+      );
+      assert.equal(
+        importedAssignments.filter((item) => item.shiftCode === "/").length,
+        sourceRawCounts.get("/") ?? 0,
       );
       const attendanceDefinitions = new Map([
         ["EL", ["Educational Leave", "#D1C4E9"]],
@@ -1395,6 +1404,7 @@ test(
         ["CL", ["Casual Leave", "#FFF59D"]],
         ["R", ["Requested Off", "#616161"]],
         ["OFF", ["Off Day", "#E0E0E0"]],
+        ["/", ["Unresolved attendance status", "#E0E0E0"]],
       ]);
       for (const [code, [description, color]] of attendanceDefinitions) {
         const assignment = importedAssignments.find(

@@ -1,4 +1,5 @@
 import app from "./app";
+import { ensureAmanDepartments } from "./lib/ensureAmanDepartments";
 import { ensureShiftDefinitions } from "./lib/ensureShiftDefinitions";
 import { logger } from "./lib/logger";
 
@@ -18,9 +19,10 @@ if (Number.isNaN(port) || port <= 0) {
 
 async function start(): Promise<void> {
   try {
+    await ensureAmanDepartments();
     await ensureShiftDefinitions();
   } catch (err) {
-    logger.error({ err }, "Could not seed default roster shift values");
+    logger.error({ err }, "Could not initialize Aman roster definitions");
     process.exit(1);
   }
 

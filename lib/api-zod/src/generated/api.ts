@@ -26,8 +26,42 @@ export const GetCurrentUserResponse = zod.object({
   "email": zod.string(),
   "fullName": zod.string(),
   "role": zod.enum(['admin', 'staff']),
-  "departmentId": zod.string().nullable()
+  "departmentId": zod.string().nullable(),
+  "employeeId": zod.string().nullable(),
+  "employeeName": zod.string().nullable()
 })
+
+
+/**
+ * @summary Link the signed-in user to their employee record
+ */
+export const LinkCurrentUserEmployeeBody = zod.object({
+  "employeeId": zod.string().uuid()
+})
+
+export const LinkCurrentUserEmployeeResponse = zod.object({
+  "id": zod.string(),
+  "clerkUserId": zod.string(),
+  "email": zod.string(),
+  "fullName": zod.string(),
+  "role": zod.enum(['admin', 'staff']),
+  "departmentId": zod.string().nullable(),
+  "employeeId": zod.string().nullable(),
+  "employeeName": zod.string().nullable()
+})
+
+
+/**
+ * @summary List employees available for account linking
+ */
+export const GetEmployeeLinkOptionsResponseItem = zod.object({
+  "id": zod.string().uuid(),
+  "employeeCode": zod.string(),
+  "fullName": zod.string(),
+  "jobTitle": zod.string(),
+  "departmentName": zod.string()
+})
+export const GetEmployeeLinkOptionsResponse = zod.array(GetEmployeeLinkOptionsResponseItem)
 
 
 /**
@@ -798,6 +832,17 @@ export const PublishRosterVersionResponse = zod.object({
   "publishedAt": zod.string().datetime({"offset":true}).nullable(),
   "assignmentCount": zod.number().int()
 })
+
+
+/**
+ * Deletes a draft or archived version and its assignments. The active published version cannot be deleted.
+ * @summary Delete an inactive roster version
+ */
+export const DeleteRosterVersionParams = zod.object({
+  "versionId": zod.coerce.string()
+})
+
+export const DeleteRosterVersionResponse = zod.void()
 
 
 /**

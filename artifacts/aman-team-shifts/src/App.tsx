@@ -6,23 +6,24 @@ import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/reac
 import {
   Activity, ArrowDownToLine, ArrowLeft, ArrowRight, CalendarDays, Check, ChevronDown,
   ChevronLeft, ChevronRight, CircleAlert, Clock3, FileSpreadsheet, Filter, LayoutDashboard,
-  LogOut, Menu, Plus, Search, Settings2, ShieldCheck, Stethoscope, Users, X,
+  LogOut, Menu, Plus, Search, Settings2, ShieldCheck, Stethoscope, Trash2, Users, X,
 } from 'lucide-react';
 import {
-  getGetDashboardSummaryQueryKey, getGetMonthlyScheduleQueryKey, getGetMyScheduleQueryKey,
+  getGetCurrentUserQueryKey, getGetDashboardSummaryQueryKey, getGetEmployeeLinkOptionsQueryKey,
+  getGetMonthlyScheduleQueryKey, getGetMyScheduleQueryKey,
   getGetRecentActivityQueryKey,
   getGetRosterVersionScheduleQueryKey,
   getListDepartmentsQueryKey, getListEmployeesQueryKey, getListRosterImportsQueryKey,
   getListRosterVersionsQueryKey, getListShiftTypesQueryKey,
   useCreateDepartment, useCreateEmployee, useCreateRosterAssignment, useCreateShiftType,
-  useCreateRosterVersion,
-  useAutomaticRosterImport, useDeleteRosterAssignment, useGetCurrentUser, useGetDashboardSummary,
+  useCreateRosterVersion, useGetEmployeeLinkOptions,
+  useAutomaticRosterImport, useDeleteRosterAssignment, useDeleteRosterVersion, useGetCurrentUser, useGetDashboardSummary,
   useGetMonthlySchedule, useGetMySchedule, useGetRecentActivity, useHealthCheck, useListDepartments,
   useGetRosterVersionSchedule,
   useListEmployees, useListRosterImports, useListRosterVersions, useListShiftTypes,
   usePreviewRosterImport, useResolveRosterImport, useConfirmRosterImport,
   usePublishRosterVersion, useRollbackRosterVersion,
-  useUpdateDepartment, useUpdateEmployee, useUpdateRosterAssignment, useUpdateShiftType,
+  useLinkCurrentUserEmployee, useUpdateDepartment, useUpdateEmployee, useUpdateRosterAssignment, useUpdateShiftType,
   type ActivityItem, type AutomaticRosterImportResult, type Department, type Employee,
   type ImportMapping, type ImportPreview,
   type RosterVersion, type ShiftAssignment, type ShiftType,
@@ -164,7 +165,7 @@ function PublicHome() {
           <div className="preview-head"><div><small>TEAM ROSTER</small><strong>November 2026</strong></div><CalendarDays size={19} /></div>
           <div className="preview-week">{['S','M','T','W','T','F','S'].map((d,i)=><span key={`${d}${i}`}>{d}</span>)}</div>
           <div className="preview-days">{[15,16,17,18,19,20,21].map(d=><span className={d===19?'selected':''} key={d}>{d}</span>)}</div>
-          <div className="preview-label">THURSDAY · 19 NOV <span>OR/PACU</span></div>
+          <div className="preview-label">THURSDAY · 19 NOV <span>EMERGENCY</span></div>
            <div className="preview-shift"><span className="preview-avatar">LF</span><div><b>Layla Faris</b><small>D</small></div><i className="shift-bar blue-bar" /></div>
            <div className="preview-shift"><span className="preview-avatar avatar-green">MS</span><div><b>Mira Sen</b><small>M</small></div><i className="shift-bar green-bar" /></div>
            <div className="preview-shift"><span className="preview-avatar avatar-sand">RK</span><div><b>Rana Khoury</b><small>D1</small></div><i className="shift-bar sand-bar" /></div>
@@ -242,6 +243,91 @@ function AdminOnly({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+function employeeLinkErrorMessage(error: unknown): string {
+  if (error && typeof error === 'object') {
+    const data = (error as { data?: unknown }).data;
+    if (data && typeof data === 'object') {
+      const message = (data as { error?: unknown }).error;
+      if (typeof message === 'string' && message.trim()) return message;
+    }
+    if (error instanceof Error && error.message.trim()) return error.message;
+  }
+  return 'Your name could not be linked. Choose an available employee and try again.';
+}
+
+function EmployeeLinkPage() {
+  const [, setLocation] = useLocation();
+  const currentUser = useGetCurrentUser();
+  const employeeOptions = useGetEmployeeLinkOptions({
+    query: { enabled: !currentUser.isLoading && !currentUser.isError },
+  });
+  const [employeeId, setEmployeeId] = useState('');
+  useEffect(() => {
+    if (currentUser.data?.employeeId) setEmployeeId(currentUser.data.employeeId);
+  }, [currentUser.data?.employeeId]);
+  const linkEmployee = useLinkCurrentUserEmployee({
+    mutation: {
+      onSuccess: async (user) => {
+        queryClient.setQueryData(getGetCurrentUserQueryKey(), user);
+        await queryClient.invalidateQueries({ queryKey: getGetEmployeeLinkOptionsQueryKey() });
+        invalidate(getGetMyScheduleQueryKey());
+        setLocation('/my-schedule');
+      },
+    },
+  });
+
+  if (currentUser.isLoading) {
+    return <AppShell title="Select your name"><SpinnerBlock label="Loading your account"/></AppShell>;
+  }
+  if (currentUser.isError || !currentUser.data) {
+    return <AppShell title="Select your name"><QueryError message="We could not load your account." retry={()=>currentUser.refetch()}/></AppShell>;
+  }
+
+  return <AppShell title="Select your name">
+    <PageHeading eyebrow="CONNECT YOUR ACCOUNT" title="Select your name"
+      detail="Choose your employee record to connect this account with your personal shift schedule."/>
+    <section className="surface employee-link-panel">
+      <label className="form-field employee-link-field">
+        <span>Select your name</span>
+        <select value={employeeId} disabled={!!currentUser.data.employeeId}
+          onChange={event=>setEmployeeId(event.target.value)} data-testid="select-employee-link">
+          <option value="">Choose your name</option>
+          {(employeeOptions.data||[]).map(employee=><option key={employee.id} value={employee.id}>
+            {employee.fullName} · {employee.jobTitle} · {employee.departmentName} · {employee.employeeCode}
+          </option>)}
+        </select>
+      </label>
+      {currentUser.data.employeeId&&<p className="employee-link-intro">
+        Your account is linked to {currentUser.data.employeeName||currentUser.data.fullName}.
+      </p>}
+      {employeeOptions.isLoading&&<span className="quiet-note">Loading available employee names…</span>}
+      {employeeOptions.isError&&<QueryError message="Available employee names could not be loaded." retry={()=>employeeOptions.refetch()}/>}
+      {!employeeOptions.isLoading&&!employeeOptions.isError&&!employeeOptions.data?.length&&
+        <p className="quiet-note">No unlinked employee records are available. Contact your scheduling administrator.</p>}
+      {linkEmployee.isError&&<p className="inline-error" role="alert">{employeeLinkErrorMessage(linkEmployee.error)}</p>}
+      {currentUser.data.employeeId
+        ? <button className="button button-primary" onClick={()=>setLocation('/my-schedule')} data-testid="button-continue-my-shifts">
+            Continue to My shifts <ArrowRight size={15}/>
+          </button>
+        : <button className="button button-primary" disabled={!employeeId||linkEmployee.isPending}
+            onClick={()=>linkEmployee.mutate({data:{employeeId}})} data-testid="button-link-employee">
+            {linkEmployee.isPending?'Linking…':'Link my name'} <ArrowRight size={15}/>
+          </button>}
+    </section>
+  </AppShell>;
+}
+
+function MyScheduleRoute() {
+  const currentUser = useGetCurrentUser();
+  if (currentUser.isLoading) {
+    return <AppShell title="My shifts"><SpinnerBlock label="Loading your employee profile"/></AppShell>;
+  }
+  if (currentUser.isError || !currentUser.data) {
+    return <AppShell title="My shifts"><QueryError message="We could not load your employee profile." retry={()=>currentUser.refetch()}/></AppShell>;
+  }
+  return currentUser.data.employeeId ? <SchedulePage mine/> : <EmployeeLinkPage/>;
+}
+
 function PageHeading({ eyebrow, title, detail, actions }: { eyebrow?: string; title: string; detail?: string; actions?: ReactNode }) {
   return <div className="page-heading"><div>{eyebrow && <div className="eyebrow">{eyebrow}</div>}<h1>{title}</h1>{detail && <p>{detail}</p>}</div>{actions && <div className="heading-actions">{actions}</div>}</div>;
 }
@@ -313,7 +399,7 @@ function SchedulePage({mine=false}:{mine?:boolean}) {
   const [month,setMonth]=useState(monthNow());
   const [departmentId,setDepartmentId]=useState('');
   const [selectedDate,setSelectedDate]=useState(dateQatar(new Date()));
-  const [showAllStatuses,setShowAllStatuses]=useState(false);
+  const [showAllStatuses,setShowAllStatuses]=useState(true);
   const {data:departments=[]}=useListDepartments();
   const scheduleParams={month,...(departmentId?{departmentId}:{})};
   const teamQuery=useGetMonthlySchedule(scheduleParams,{query:{enabled:!mine,queryKey:getGetMonthlyScheduleQueryKey(scheduleParams)}});
@@ -325,7 +411,9 @@ function SchedulePage({mine=false}:{mine?:boolean}) {
   const refetch=mine?mineQuery.refetch:teamQuery.refetch;
   const {data:user}=useGetCurrentUser();
   const [editAssignment,setEditAssignment]=useState<ShiftAssignment|null|false>(false);
-   const rows=schedule?.assignments.filter(a=>a.date===selectedDate&&(showAllStatuses||a.isWorking)) ?? [];
+   const rows=mine
+     ? schedule?.assignments ?? []
+     : schedule?.assignments.filter(a=>a.date===selectedDate&&(showAllStatuses||a.isWorking)) ?? [];
   const grouped=useMemo(()=>rows.reduce<Record<string,ShiftAssignment[]>>((acc,a)=>{(acc[a.departmentName]??=[]).push(a);return acc;},{}),[rows]);
   const admin=user?.role==='admin';
   const changeMonth=(next:string)=>{setMonth(next);setSelectedDate(`${next}-01`);};
@@ -351,16 +439,23 @@ function SchedulePage({mine=false}:{mine?:boolean}) {
       <div className="schedule-month-name"><span>{monthLabel(month)}</span><span className="schedule-timezone">Asia/Qatar · GMT+03:00</span></div>
        {!mine && <label className="filter-select"><Filter size={15}/><select value={departmentId} onChange={e=>setDepartmentId(e.target.value)} aria-label="Filter by department" data-testid="select-department-filter">
         <option value="">All departments</option>{departments.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select><ChevronDown size={15}/></label>}
-       {!mine&&<label className="status-filter"><input type="checkbox" checked={showAllStatuses} onChange={e=>setShowAllStatuses(e.target.checked)} data-testid="toggle-all-statuses"/><span>All statuses</span></label>}
+        {!mine&&<div className="staff-view-toggle" role="group" aria-label="Staff schedule view">
+         <button type="button" className={!showAllStatuses?'selected':''} onClick={()=>setShowAllStatuses(false)} aria-pressed={!showAllStatuses} data-testid="toggle-on-duty">On Duty</button>
+         <button type="button" className={showAllStatuses?'selected':''} onClick={()=>setShowAllStatuses(true)} aria-pressed={showAllStatuses} data-testid="toggle-all-staff">All Staff</button>
+        </div>}
        {admin && !mine && <button className="button button-primary" disabled={!schedule?.versionId} onClick={()=>setEditAssignment(null)} data-testid="button-add-assignment"><Plus size={16}/> Add shift</button>}
     </div>
      {isLoading?<SpinnerBlock/>:isError||!schedule?<QueryError message={scheduleErrorMessage(scheduleError)} retry={()=>refetch()}/>:!schedule.versionId&&schedule.assignments.length===0?
        <EmptyState title="No published schedule available for this period." detail="Your scheduling team has not published a roster for this month yet."/>:<>
-      <div className="calendar-strip"><div className="calendar-strip-head">{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=><span key={d}>{d}</span>)}</div>
+       {!mine&&<div className="calendar-strip"><div className="calendar-strip-head">{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=><span key={d}>{d}</span>)}</div>
          <div className="calendar-date-grid">{Array.from({length:leadingCells},(_,i)=><span className="calendar-leading-cell" aria-hidden="true" key={`blank-${i}`}/>)}{dates.map(d=>{const count=schedule.assignments.filter(a=>a.date===d&&a.isWorking).length;const chosen=d===selectedDate;
           return <button key={d} className={`calendar-date ${chosen?'chosen':''}`} onClick={()=>setSelectedDate(d)} data-testid={`button-date-${d}`}>
             <small>{Number(d.slice(-2))}</small>{count>0&&<i className="date-count">{count>99?'99+':count}</i>}</button>})}</div>
-      </div>
+       </div>}
+       {mine ? rows.length===0
+         ? <EmptyState title="No shifts listed for this month" detail="Your published shift dates will appear here."/>
+         : <MyShiftList assignments={rows}/>
+         : <>
       <div className="day-heading"><div><span className="eyebrow">{schedule.status==='published'?'PUBLISHED ROSTER':admin?'DRAFT ROSTER':'ROSTER'}</span><h2>{fmtDate(selectedDate)}</h2></div>
         <span className={`status-pill ${schedule.status==='published'?'status-live':'status-draft'}`}><i/>{schedule.status==='published'?'Published':'Draft'}</span></div>
        {rows.length===0?<EmptyState title={showAllStatuses?'No employee statuses for this date':'No working shifts for this date'} detail="Choose another day to see the roster."/>:
@@ -370,6 +465,7 @@ function SchedulePage({mine=false}:{mine?:boolean}) {
              onEdit={()=>setEditAssignment(a)} onDelete={()=>{if(schedule.versionId&&window.confirm(`Remove ${a.employeeName}’s ${a.shiftCode} assignment?`))deletes.mutate({versionId:schedule.versionId,assignmentId:a.id});}} />)}
         </section>)}</div>}
       {schedule.assignments.length===0&&rows.length===0&&<p className="quiet-note">There are no assignments in this roster version yet.</p>}
+       </>}
     </>}
      {editAssignment!==false&&<FormModal title={editAssignment?'Edit shift assignment':'Add shift assignment'} description="Changes are saved to the roster and recorded in activity history."
       fields={[{name:'date',label:'Shift date',type:'date',value:editAssignment?.date||selectedDate},
@@ -379,18 +475,41 @@ function SchedulePage({mine=false}:{mine?:boolean}) {
       busy={creates.isPending||updates.isPending}
       error={creates.isError||updates.isError?'The assignment could not be saved. Please try again.':undefined}
       onClose={()=>setEditAssignment(false)} onSubmit={saveAssignment} submitLabel="Save assignment" />}
-     <div className="shift-legend">{shiftTypes.data?.filter(type=>type.active&&type.displayInCalendar).map(type=><span key={type.id}><i className="legend-dot" style={{background:type.color}}/>{type.displayCode??type.code}</span>)}
-      <span>Shift colors follow your team’s setup</span></div>
+      {!mine&&<div className="shift-legend">{shiftTypes.data?.filter(type=>type.active&&type.displayInCalendar).map(type=><span key={type.id}><i className="legend-dot" style={{background:type.color}}/>{type.displayCode??type.code}</span>)}
+       <span>Shift colors follow your team’s setup</span></div>}
   </AppShell>;
+}
+
+function MyShiftList({assignments}:{assignments:ShiftAssignment[]}) {
+  const ordered=[...assignments].sort((left,right)=>left.date.localeCompare(right.date));
+  return <section className="surface my-shift-list" aria-label="My shifts by date" data-testid="my-shift-list">
+    {ordered.map(assignment=>{
+      const status=displayShiftStatus(assignment);
+      return <article className="my-shift-item" key={assignment.id} data-testid={`my-shift-${assignment.date}`}>
+        <time dateTime={assignment.date}>{fmtDate(assignment.date)}</time>
+        <span className="my-shift-status" data-status-code={status.code}
+          style={{'--shift-color':status.color} as React.CSSProperties}>{status.code}</span>
+      </article>;
+    })}
+  </section>;
+}
+
+function displayShiftStatus(assignment:ShiftAssignment) {
+  const sourceCode=assignment.shiftCode?.trim()??'';
+  const offDuty=!sourceCode||sourceCode==='/'||sourceCode.toUpperCase()==='BLANK';
+  return {
+    code:offDuty?'OFF':sourceCode,
+    color:offDuty?'#E0E0E0':assignment.shiftColor,
+  };
 }
 
 function ShiftRow({assignment,admin,onEdit,onDelete}:{assignment:ShiftAssignment;admin:boolean;onEdit:()=>void;onDelete:()=>void}) {
   const initials=assignment.employeeName.split(' ').map(p=>p[0]).slice(0,2).join('').toUpperCase();
-   const shiftLabel=assignment.shiftCode||'Blank';
+  const status=displayShiftStatus(assignment);
   return <div className="shift-row" data-testid={`row-assignment-${assignment.id}`}>
-    <span className="staff-avatar">{initials}</span><div className="shift-card" style={{'--shift-color':assignment.shiftColor} as React.CSSProperties}>
-      <div className="shift-staff"><strong>{assignment.employeeName}</strong><span>{assignment.employeeCode}</span></div>
-       <div className="shift-detail"><span>{shiftLabel}</span>{admin&&assignment.notes&&<small>{assignment.notes}</small>}</div>
+    <span className="staff-avatar">{initials}</span><div className="shift-card" data-status-code={status.code} style={{'--shift-color':status.color} as React.CSSProperties}>
+      <div className="shift-staff"><strong>{assignment.employeeName}</strong></div>
+        <div className="shift-detail"><span className="shift-code-label">{status.code}</span></div>
       {admin&&<div className="shift-actions"><button onClick={onEdit} aria-label={`Edit ${assignment.employeeName} shift`} data-testid={`button-edit-assignment-${assignment.id}`}>Edit</button><button onClick={onDelete} aria-label={`Delete ${assignment.employeeName} shift`} data-testid={`button-delete-assignment-${assignment.id}`}>Remove</button></div>}
     </div>
   </div>;
@@ -417,7 +536,7 @@ function FormModal({title,description,fields,onClose,onSubmit,busy=false,submitL
 
 function DirectoryPage({kind}:{kind:'employees'|'departments'|'shifts'}) {
   const titles={employees:'Employee directory',departments:'Departments',shifts:'Shift types'};
-  const details={employees:'Keep staff details and department assignments current.',departments:'Set up the teams that organize your published rosters.',shifts:'Configure shift labels and colors used in the roster.'};
+  const details={employees:'Keep staff details and department assignments current.',departments:'Emergency and Intensive Care are the only departments. HCA is a Healthcare Assistant role under Emergency.',shifts:'Configure shift labels and colors used in the roster.'};
   const [search,setSearch]=useState('');
   const [modal,setModal]=useState<{item?:Employee|Department|ShiftType}|null>(null);
   const departments=useListDepartments();
@@ -462,22 +581,23 @@ function DirectoryPage({kind}:{kind:'employees'|'departments'|'shifts'}) {
     const s=item as ShiftType|undefined;
     const systemCode=s?['D','N','M','D1','AL','CL','EL','R','OFF','/','BLANK'].includes(s.code):false;
     const fixedWorkDefinition=Boolean(s&&['D','N','M','D1'].includes(s.code));
+    const fixedAttendanceDefinition=Boolean(s&&['EL','AL','CL','R','OFF'].includes(s.code));
     return [
       {name:'category',label:'Category',type:'select',value:s?.category||'working',disabled:systemCode,
         options:[{value:'working',label:'Working shift'},{value:'attendance',label:'Attendance status'}]},
-      {name:'name',label:'Name',value:s?.name,disabled:fixedWorkDefinition},
+      {name:'name',label:'Name',value:s?.name,disabled:fixedWorkDefinition||fixedAttendanceDefinition},
       {name:'code',label:'Code',value:s?.code,disabled:systemCode},
-      {name:'meaning',label:'Meaning (optional)',value:s?.meaning,required:false,disabled:fixedWorkDefinition},
-      {name:'color',label:'Display color',type:'color',value:s?.color||'#9acfe6',disabled:fixedWorkDefinition},
-      {name:'displayCode',label:'Calendar code',value:s?.displayCode??s?.code,required:false,disabled:fixedWorkDefinition},
-      {name:'displayInCalendar',label:'Show in calendar',type:'select',value:String(s?.displayInCalendar??true),disabled:fixedWorkDefinition,
+      {name:'meaning',label:'Meaning (optional)',value:s?.meaning,required:false,disabled:fixedWorkDefinition||fixedAttendanceDefinition},
+      {name:'color',label:'Display color',type:'color',value:s?.color||'#9acfe6',disabled:fixedWorkDefinition||fixedAttendanceDefinition},
+      {name:'displayCode',label:'Calendar code',value:s?.displayCode??s?.code,required:false,disabled:fixedWorkDefinition||fixedAttendanceDefinition},
+      {name:'displayInCalendar',label:'Show in calendar',type:'select',value:String(s?.displayInCalendar??true),disabled:fixedWorkDefinition||fixedAttendanceDefinition,
         options:[{value:'true',label:'Show'},{value:'false',label:'Hide'}]},
       {name:'startsAt',label:'Internal start time',type:'time',required:false,value:s?.startsAt,disabled:systemCode},
       {name:'endsAt',label:'Internal end time',type:'time',required:false,value:s?.endsAt,disabled:systemCode}];
   };
   const toggleActive=(employee:Employee)=>updateEmployee.mutate({employeeId:employee.id,data:{active:!employee.active}});
   return <AppShell title={titles[kind]}><PageHeading eyebrow="ROSTER SETUP" title={titles[kind]} detail={details[kind]}
-      actions={<button className="button button-primary" onClick={()=>setModal({})} data-testid="button-create-item"><Plus size={16}/>{kind==='employees'?'Add employee':kind==='departments'?'Add department':'Add shift type'}</button>}/>
+      actions={kind==='departments'?undefined:<button className="button button-primary" onClick={()=>setModal({})} data-testid="button-create-item"><Plus size={16}/>{kind==='employees'?'Add employee':'Add shift type'}</button>}/>
     <div className="directory-toolbar"><div className="directory-count"><b>{list?.length??'—'}</b> {kind==='employees'?'team members':kind==='departments'?'departments':'shift types'}</div>
       {kind==='employees'&&<label className="search-box"><Search size={16}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name or employee code" data-testid="input-search-employees"/><span>⌘ K</span></label>}
     </div>
@@ -489,7 +609,7 @@ function DirectoryPage({kind}:{kind:'employees'|'departments'|'shifts'}) {
       </article>)}</section>:kind==='departments'?
       <section className="setup-list">{(departments.data||[]).map(d=><article className="setup-row" key={d.id} data-testid={`row-department-${d.id}`}>
         <span className="setup-icon"><Stethoscope size={19}/></span><div className="setup-main"><strong>{d.name}</strong><span>{d.code} · {d.timezone}</span></div>
-        <div className="setup-count"><b>{d.employeeCount}</b><span>members</span></div><button className="button button-secondary button-small" onClick={()=>setModal({item:d})} data-testid={`button-edit-department-${d.id}`}>Edit</button>
+         <div className="setup-count"><b>{d.employeeCount}</b><span>members</span></div>
       </article>)}</section>:
       <section className="shift-type-list">{(shifts.data||[]).map(s=><article className="shift-type-row" key={s.id} data-testid={`row-shift-${s.id}`}>
          <span className="shift-swatch" style={{background:s.color}}/><div className="shift-type-main"><strong>{s.name}<small>{s.code} · {s.category==='working'?'Working':'Attendance'}</small></strong><span>{s.meaning|| (s.startsAt&&s.endsAt?`${fmtTime(s.startsAt)} – ${fmtTime(s.endsAt)}`:'Meaning not specified')}</span></div>
@@ -720,6 +840,11 @@ function HistoryPage() {
   }}});
   const publish=usePublishRosterVersion({mutation:{onSuccess:()=>invalidateRosterReads()}});
   const rollbackMutation=useRollbackRosterVersion({mutation:{onSuccess:()=>{invalidateRosterReads();setRollback(null);setReason('');}}});
+  const deleteVersion=useDeleteRosterVersion({mutation:{onSuccess:()=>{
+    if(selectedVersionId)invalidate(getGetRosterVersionScheduleQueryKey(selectedVersionId));
+    setSelectedVersionId('');
+    invalidateRosterReads();
+  }}});
   const createAssignment=useCreateRosterAssignment({mutation:{onSuccess:()=>{if(selectedVersionId)invalidate(getGetRosterVersionScheduleQueryKey(selectedVersionId));invalidateRosterReads();setEditAssignment(false);}}});
   const updateAssignment=useUpdateRosterAssignment({mutation:{onSuccess:()=>{if(selectedVersionId)invalidate(getGetRosterVersionScheduleQueryKey(selectedVersionId));invalidateRosterReads();setEditAssignment(false);}}});
   const deleteAssignment=useDeleteRosterAssignment({mutation:{onSuccess:()=>{if(selectedVersionId)invalidate(getGetRosterVersionScheduleQueryKey(selectedVersionId));invalidateRosterReads();}}});
@@ -749,8 +874,12 @@ function HistoryPage() {
             onClick={()=>{if(window.confirm(`Publish version ${v.versionNumber} for ${monthLabel(month)}? This becomes visible to the nursing team.`))publish.mutate({versionId:v.id});}}
             disabled={publish.isPending} data-testid={`button-publish-version-${v.id}`}>{publish.isPending?'Publishing…':'Publish version'}</button>}
           {v.status!=='draft'&&<button className="button button-secondary button-small" onClick={()=>{setRollback(v);setReason('');}} data-testid={`button-rollback-version-${v.id}`}>Restore this version</button>}
+          {v.status!=='published'&&<button className="button button-danger button-small" disabled={deleteVersion.isPending}
+            onClick={()=>{if(window.confirm(`Delete version ${v.versionNumber} (${v.periodStart} to ${v.periodEnd})? Its assignments will be removed. The active schedule will not change.`))deleteVersion.mutate({versionId:v.id});}}
+            data-testid={`button-delete-version-${v.id}`}><Trash2 size={13}/>{deleteVersion.isPending?'Deleting…':'Delete version'}</button>}
         </div>{i<versions.data.length-1&&<span className="version-track"/>}</article>)}</section>}
     {publish.isError&&<p className="inline-error">This version could not be published. Please retry.</p>}
+     {deleteVersion.isError&&<p className="inline-error">This version could not be deleted. The active schedule remains unchanged.</p>}
     {selectedVersionId&&<section className="surface version-preview">
       <div className="section-head"><div><div className="eyebrow">VERSION PREVIEW</div><h2>{activeVersion?`Version ${activeVersion.versionNumber}`:'Roster version'} · {monthLabel(month)}</h2>
         <p>{activeVersion?.status==='draft'?'Edit this draft before publishing.':'Read-only historical view.'}</p></div>
@@ -800,6 +929,7 @@ function AuthSwitch() {
   const [,setLocation]=useLocation();
   return <ClerkProvider publishableKey={clerkPubKey} proxyUrl={clerkProxyUrl} appearance={appearance}
     signInUrl={`${basePath}/sign-in`} signUpUrl={`${basePath}/sign-up`}
+    signUpForceRedirectUrl={`${basePath}/select-name`}
     localization={{signIn:{start:{title:'Welcome back',subtitle:'Sign in to check your Aman roster'}},signUp:{start:{title:'Join your team',subtitle:'Create your Aman Nursing account'}}}}
     routerPush={to=>setLocation(stripBase(to))} routerReplace={to=>setLocation(stripBase(to),{replace:true})}>
     <QueryClientProvider client={queryClient}><CacheOnUserChange/><HealthMonitor/><Switch>
@@ -808,7 +938,8 @@ function AuthSwitch() {
       <Route path="/sign-up/*?" component={()=> <AuthPage type="signup"/>}/>
       <Route path="/dashboard" component={()=> <SignedInOnly><DashboardPage/></SignedInOnly>}/>
       <Route path="/schedule" component={()=> <SignedInOnly><SchedulePage/></SignedInOnly>}/>
-      <Route path="/my-schedule" component={()=> <SignedInOnly><SchedulePage mine/></SignedInOnly>}/>
+      <Route path="/select-name" component={()=> <SignedInOnly><EmployeeLinkPage/></SignedInOnly>}/>
+      <Route path="/my-schedule" component={()=> <SignedInOnly><MyScheduleRoute/></SignedInOnly>}/>
       <Route path="/admin/employees" component={()=> <SignedInOnly><AdminOnly><DirectoryPage kind="employees"/></AdminOnly></SignedInOnly>}/>
       <Route path="/admin/departments" component={()=> <SignedInOnly><AdminOnly><DirectoryPage kind="departments"/></AdminOnly></SignedInOnly>}/>
       <Route path="/admin/shifts" component={()=> <SignedInOnly><AdminOnly><DirectoryPage kind="shifts"/></AdminOnly></SignedInOnly>}/>

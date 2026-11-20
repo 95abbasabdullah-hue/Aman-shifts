@@ -117,14 +117,8 @@ function stableEmployeeCode(name: string): string {
   return `AUTO-${stableHash(normalizeEmployeeName(name))}`;
 }
 
-function departmentCodeForLabel(label: string): string {
-  const compact = label
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 28);
-  return compact || `AUTO_${stableHash(normalizeIdentityText(label), 12)}`;
+function isHealthcareAssistantRole(value: string): boolean {
+  return /\bHCA\b|HEALTH\s*CARE\s*ASSISTANT/i.test(value.trim());
 }
 
 function dateRange(start: string, end: string): string[] {
@@ -163,10 +157,19 @@ function lookupDepartment(
 ): AutoImportDepartmentReference | undefined {
   const normalized = normalizeIdentityText(label);
   if (!normalized) return undefined;
+  const canonicalCode =
+    normalized === "hca" ||
+    normalized === "healthcareassistant"
+      ? "ed"
+      : normalized === "emergency" || normalized === "emergencydepartment"
+        ? "ed"
+        : normalized === "intensivecare" || normalized === "intensivecareunit"
+          ? "icu"
+          : normalized;
+  if (canonicalCode !== "ed" && canonicalCode !== "icu") return undefined;
   return departments.find(
     (department) =>
-      normalizeIdentityText(department.code) === normalized ||
-      normalizeIdentityText(department.name) === normalized,
+      normalizeIdentityText(department.code) === canonicalCode,
   );
 }
 
@@ -355,32 +358,33 @@ export function prepareAutomaticRoster(
         `No department could be identified for "${fullName}". The existing published roster was not changed.`,
       );
     }
+    if (!matchedDepartment) {
+      fail(
+        "department_conflict",
+        `Department "${rawDepartmentLabel}" for "${fullName}" is unsupported. Use Emergency (ED) or Intensive Care (ICU); the published roster was not changed.`,
+      );
+    }
+    const healthcareAssistant =
+      isHealthcareAssistantRole(existingEmployee?.jobTitle ?? "") ||
+      records.some((record) => isHealthcareAssistantRole(record.sourceRole)) ||
+      normalizeIdentityText(rawDepartmentLabel) === "hca";
+    if (healthcareAssistant && matchedDepartment.code !== "ED") {
+      fail(
+        "department_conflict",
+        `Healthcare Assistant "${fullName}" must belong to Emergency (ED), not ${matchedDepartment.name}. The published roster was not changed.`,
+      );
+    }
     const departmentKey = matchedDepartment
       ? `id:${matchedDepartment.id}`
       : `label:${normalizeIdentityText(rawDepartmentLabel)}`;
     let department = departmentsByKey.get(departmentKey);
     if (!department) {
-      const code = matchedDepartment?.code ?? departmentCodeForLabel(rawDepartmentLabel);
-      const codeConflict = matchedDepartment
-        ? undefined
-        : references.departments.find(
-            (candidate) =>
-              candidate.code.toUpperCase() === code.toUpperCase() &&
-              normalizeIdentityText(candidate.name) !==
-                normalizeIdentityText(rawDepartmentLabel),
-          );
-      if (codeConflict) {
-        fail(
-          "department_conflict",
-          `The department label "${rawDepartmentLabel}" conflicts with an existing department code.`,
-        );
-      }
       department = {
         key: departmentKey,
         label: rawDepartmentLabel || matchedDepartment!.name,
-        code,
-        name: matchedDepartment?.name ?? rawDepartmentLabel,
-        existingId: matchedDepartment?.id ?? null,
+        code: matchedDepartment.code,
+        name: matchedDepartment.name,
+        existingId: matchedDepartment.id,
       };
       departmentsByKey.set(departmentKey, department);
     }
@@ -404,15 +408,16 @@ export function prepareAutomaticRoster(
       );
     }
 
+    const sourceRole =
+      records.find((record) => record.sourceRole.trim())?.sourceRole.trim() ?? "";
     const employee: PlannedEmployee = {
       key,
       sourceEmployeeId,
       sourceNames,
       fullName: existingEmployee?.fullName ?? fullName,
-      jobTitle:
-        existingEmployee?.jobTitle ??
-        records.find((record) => record.sourceRole.trim())?.sourceRole.trim() ??
-        "Unspecified role",
+      jobTitle: healthcareAssistant
+        ? "Healthcare Assistant"
+        : (existingEmployee?.jobTitle ?? sourceRole) || "Unspecified role",
       departmentKey,
       existingId: existingEmployee?.id ?? null,
       employeeCode,

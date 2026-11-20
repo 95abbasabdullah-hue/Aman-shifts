@@ -1,4 +1,9 @@
-import { db, shiftTypesTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
+import {
+  db,
+  shiftAssignmentsTable,
+  shiftTypesTable,
+} from "@workspace/db";
 import { DEFAULT_SHIFT_DEFINITIONS } from "./shiftDefinitions";
 
 export async function ensureShiftDefinitions(): Promise<void> {
@@ -18,12 +23,79 @@ export async function ensureShiftDefinitions(): Promise<void> {
       });
   }
   for (const definition of attendanceDefinitions) {
+    if (definition.code === "/") {
+      await db
+        .insert(shiftTypesTable)
+        .values(definition)
+        .onConflictDoUpdate({
+          target: shiftTypesTable.code,
+          set: {
+            category: "attendance",
+            name: definition.name,
+            meaning: definition.meaning,
+            color: definition.color,
+            displayCode: "/",
+            displayInCalendar: true,
+            startsAt: null,
+            endsAt: null,
+            active: true,
+            updatedAt: new Date(),
+          },
+        });
+      continue;
+    }
     await db
       .insert(shiftTypesTable)
       .values(definition)
       .onConflictDoUpdate({
         target: shiftTypesTable.code,
-        set: { category: "attendance", active: true, updatedAt: new Date() },
+        set: {
+          category: "attendance",
+          name: definition.name,
+          meaning: definition.meaning,
+          color: definition.color,
+          displayCode: definition.displayCode,
+          displayInCalendar: definition.displayInCalendar,
+          startsAt: null,
+          endsAt: null,
+          active: true,
+          updatedAt: new Date(),
+        },
       });
+  }
+
+  // Older imports used BLANK to store an empty Excel cell. Keep those raw
+  // assignments intact, but make their visible status match OFF.
+  const offDay = attendanceDefinitions.find((definition) => definition.code === "OFF");
+  if (offDay) {
+    const [offDayType] = await db
+      .select({ id: shiftTypesTable.id })
+      .from(shiftTypesTable)
+      .where(eq(shiftTypesTable.code, "OFF"))
+      .limit(1);
+    const [legacyBlankType] = await db
+      .select({ id: shiftTypesTable.id })
+      .from(shiftTypesTable)
+      .where(eq(shiftTypesTable.code, "BLANK"))
+      .limit(1);
+    if (offDayType && legacyBlankType) {
+      await db
+        .update(shiftAssignmentsTable)
+        .set({ shiftTypeId: offDayType.id, updatedAt: new Date() })
+        .where(eq(shiftAssignmentsTable.shiftTypeId, legacyBlankType.id));
+    }
+    await db
+      .update(shiftTypesTable)
+      .set({
+        category: "attendance",
+        name: offDay.name,
+        meaning: "Empty source cell; displayed as OFF. The raw value remains blank.",
+        color: offDay.color,
+        displayCode: "OFF",
+        displayInCalendar: true,
+        active: false,
+        updatedAt: new Date(),
+      })
+      .where(eq(shiftTypesTable.code, "BLANK"));
   }
 }

@@ -1,7 +1,7 @@
 import { Router, type IRouter, type RequestHandler } from "express";
 import multer from "multer";
 import { createHash } from "node:crypto";
-import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   AutomaticRosterImportResponse,
@@ -549,10 +549,70 @@ router.post(
             .where(eq(rosterVersionsTable.id, duplicateJob.createdVersionId))
             .limit(1);
           if (duplicateVersion) {
+            const versionPeriod = periodForVersion(duplicateVersion);
+            const duplicatePeriod = {
+              start: duplicateJob.periodStart ?? versionPeriod.start,
+              end: duplicateJob.periodEnd ?? versionPeriod.end,
+            };
+            const duplicateAssignments = await tx
+              .select({
+                employeeId: employeesTable.id,
+                date: shiftAssignmentsTable.date,
+                departmentCode: departmentsTable.code,
+                departmentName: departmentsTable.name,
+              })
+              .from(shiftAssignmentsTable)
+              .innerJoin(
+                employeesTable,
+                eq(employeesTable.id, shiftAssignmentsTable.employeeId),
+              )
+              .innerJoin(
+                departmentsTable,
+                eq(departmentsTable.id, employeesTable.departmentId),
+              )
+              .where(
+                and(
+                  eq(shiftAssignmentsTable.versionId, duplicateVersion.id),
+                  gte(shiftAssignmentsTable.date, duplicatePeriod.start),
+                  lte(shiftAssignmentsTable.date, duplicatePeriod.end),
+                ),
+              );
+            const departmentEmployees = new Map<
+              string,
+              { name: string; employeeIds: Set<string> }
+            >();
+            for (const assignment of duplicateAssignments) {
+              if (assignment.departmentCode !== "ED" && assignment.departmentCode !== "ICU") {
+                continue;
+              }
+              const group = departmentEmployees.get(assignment.departmentCode) ?? {
+                name: assignment.departmentName,
+                employeeIds: new Set<string>(),
+              };
+              group.employeeIds.add(assignment.employeeId);
+              departmentEmployees.set(assignment.departmentCode, group);
+            }
+            const storedMetrics = storedAutoImportMetrics(duplicateJob);
             return {
               job: duplicateJob,
               version: duplicateVersion,
-              metrics: storedAutoImportMetrics(duplicateJob),
+              metrics: {
+                ...storedMetrics,
+                employeeCount: new Set(
+                  duplicateAssignments.map((assignment) => assignment.employeeId),
+                ).size,
+                dateCount: new Set(
+                  duplicateAssignments.map((assignment) => assignment.date),
+                ).size,
+                assignmentCount: duplicateAssignments.length,
+                departmentCounts: [...departmentEmployees.entries()]
+                  .map(([departmentCode, group]) => ({
+                    departmentCode,
+                    departmentName: group.name,
+                    employeeCount: group.employeeIds.size,
+                  }))
+                  .sort((left, right) => left.departmentCode.localeCompare(right.departmentCode)),
+              },
               alreadyImported: true,
             };
           }
@@ -617,6 +677,12 @@ router.post(
 
         const departmentIdByKey = new Map<string, string>();
         for (const department of plan.departments) {
+          if (department.code !== "ED" && department.code !== "ICU") {
+            throw new AutoImportValidationError(
+              `Unsupported department "${department.code}". Only Emergency (ED) and Intensive Care (ICU) can be imported.`,
+              "department_conflict",
+            );
+          }
           if (department.existingId) {
             departmentIdByKey.set(department.key, department.existingId);
             const existing = departmentRows.find((item) => item.id === department.existingId);
@@ -655,12 +721,18 @@ router.post(
             const existing = employeeRows.find((item) => item.id === employee.existingId);
             if (
               existing &&
-              (!existing.active || existing.departmentId !== departmentId)
+              (!existing.active ||
+                existing.departmentId !== departmentId ||
+                (employee.jobTitle === "Healthcare Assistant" &&
+                  existing.jobTitle !== "Healthcare Assistant"))
             ) {
               await tx
                 .update(employeesTable)
                 .set({
                   departmentId,
+                  ...(employee.jobTitle === "Healthcare Assistant"
+                    ? { jobTitle: "Healthcare Assistant" }
+                    : {}),
                   active: true,
                   updatedAt: new Date(),
                 })
@@ -736,35 +808,6 @@ router.post(
         }
 
         const shiftTypeById = new Map(shiftRows.map((shift) => [shift.id, shift]));
-        let blankShiftType = shiftRows.find(
-          (shift) => shift.code.trim().toUpperCase() === "BLANK",
-        );
-        if (
-          !blankShiftType &&
-          plan.assignments.some(
-            (assignment) =>
-              assignment.normalizedShiftCode === "BLANK" &&
-              !assignment.knownShiftTypeId,
-          )
-        ) {
-          const [created] = await tx
-            .insert(shiftTypesTable)
-            .values({
-              code: "BLANK",
-              category: "attendance",
-              name: "Blank cell",
-              meaning: "Empty workbook cell; not a day off.",
-              color: "#78909C",
-              displayCode: "",
-              displayInCalendar: false,
-              active: true,
-              startsAt: null,
-              endsAt: null,
-            })
-            .returning();
-          blankShiftType = created;
-          shiftTypeById.set(created.id, created);
-        }
         const unknownCodes = [...plan.unknownShiftCounts.keys()];
         const unknownTypeCodes = unknownCodes.map(importedAttendanceShiftCode);
         const importedTypes = unknownTypeCodes.length
@@ -829,7 +872,6 @@ router.post(
           const departmentId = departmentIdByKey.get(planned.departmentKey);
           const shiftTypeId =
             planned.knownShiftTypeId ??
-            (planned.normalizedShiftCode === "BLANK" ? blankShiftType?.id : undefined) ??
             importedTypeByCode.get(
               importedAttendanceShiftCode(planned.normalizedShiftCode),
             )?.id;

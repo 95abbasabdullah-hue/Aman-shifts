@@ -29,9 +29,8 @@ function createTestRepository() {
   const jobs: Array<typeof importJobsTable.$inferSelect> = [];
   let auditCount = 0;
   const departments = [
-    { id: randomUUID(), code: "ED", name: "Emergency Department" },
-    { id: randomUUID(), code: "ICU", name: "Intensive Care Unit" },
-    { id: randomUUID(), code: "HCA", name: "Health Care Assistant" },
+    { id: randomUUID(), code: "ED", name: "Emergency" },
+    { id: randomUUID(), code: "ICU", name: "Intensive Care" },
   ];
   const repository: RosterPreviewRepository = {
     async loadReferenceData() {

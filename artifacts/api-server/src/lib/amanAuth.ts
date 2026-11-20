@@ -81,8 +81,6 @@ export async function requireAuthenticatedUser(
           email,
           fullName,
           role,
-          employeeId: matchedEmployee?.id ?? null,
-          departmentId: matchedEmployee?.departmentId ?? null,
           updatedAt: new Date(),
         },
       })

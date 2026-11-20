@@ -16,3 +16,9 @@ description: User-provided scheduling, language, and demo-data constraints for A
 **Why:** Non-roster formatted rows can resemble staff rows, while the missing-ID employee still has valid assignments that must not be dropped.
 
 **How to apply:** Keep the workbook as a regression fixture; keep row-range assumptions out of general parser logic.
+
+- Team Shifts defaults to All Staff; `/` and blank source cells are treated as gray OFF, with raw workbook values retained for auditing.
+
+**Why:** The user clarified that `/` means off duty and must not appear in the Team Shifts list.
+
+**How to apply:** Keep OFF, leave, and other attendance statuses visible, exclude them from working counts, and preserve the raw source values.

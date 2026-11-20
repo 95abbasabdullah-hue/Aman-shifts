@@ -41,6 +41,7 @@ import type {
   DepartmentUpdate,
   Employee,
   EmployeeInput,
+  EmployeeLinkOptionsResponse,
   EmployeeUpdate,
   GetDashboardSummaryParams,
   GetMonthlyScheduleParams,
@@ -49,6 +50,7 @@ import type {
   HealthStatus,
   ImportPreview,
   ImportResolutionInput,
+  LinkEmployeeInput,
   ListEmployeesParams,
   ListRosterVersionsParams,
   RollbackRosterInput,
@@ -281,6 +283,195 @@ export function useGetCurrentUser<TData = Awaited<ReturnType<typeof getCurrentUs
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
 
   const queryOptions = getGetCurrentUserQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getLinkCurrentUserEmployeeUrl = () => {
+
+
+
+
+  return `/api/me/employee`
+}
+
+/**
+ * @summary Link the signed-in user to their employee record
+ */
+export const linkCurrentUserEmployee = async (linkEmployeeInput: LinkEmployeeInput, options?: Parameters<typeof customFetch>[1]): Promise<CurrentUser> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<CurrentUser>(getLinkCurrentUserEmployeeUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(linkEmployeeInput)
+  }
+);}
+
+
+
+
+
+export const getLinkCurrentUserEmployeeMutationKey = () => ['linkCurrentUserEmployee'] as const;
+
+export const getLinkCurrentUserEmployeeMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof linkCurrentUserEmployee>>, TError,LinkCurrentUserEmployeeMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof linkCurrentUserEmployee>>, TError,LinkCurrentUserEmployeeMutationVariables, TContext> => {
+
+const mutationKey = getLinkCurrentUserEmployeeMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof linkCurrentUserEmployee>>, LinkCurrentUserEmployeeMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  linkCurrentUserEmployee(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type LinkCurrentUserEmployeeMutationResult = NonNullable<Awaited<ReturnType<typeof linkCurrentUserEmployee>>>
+    export type LinkCurrentUserEmployeeMutationBody = BodyType<LinkEmployeeInput>
+    export type LinkCurrentUserEmployeeMutationError = ErrorType<ApiError>
+    export type LinkCurrentUserEmployeeMutationVariables = {data: BodyType<LinkEmployeeInput>}
+
+    /**
+ * @summary Link the signed-in user to their employee record
+ */
+export const useLinkCurrentUserEmployee = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof linkCurrentUserEmployee>>, TError,LinkCurrentUserEmployeeMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof linkCurrentUserEmployee>>,
+        TError,
+        LinkCurrentUserEmployeeMutationVariables,
+        TContext
+      > => {
+      return useMutation(getLinkCurrentUserEmployeeMutationOptions(options), queryClient);
+    }
+
+export const getGetEmployeeLinkOptionsUrl = () => {
+
+
+
+
+  return `/api/employee-link-options`
+}
+
+/**
+ * @summary List employees available for account linking
+ */
+export const getEmployeeLinkOptions = async ( options?: Parameters<typeof customFetch>[1]): Promise<EmployeeLinkOptionsResponse> => {
+
+  return customFetch<EmployeeLinkOptionsResponse>(getGetEmployeeLinkOptionsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetEmployeeLinkOptionsQueryKey = () => {
+    return [
+    `/api/employee-link-options`
+    ] as const;
+    }
+
+
+export const getGetEmployeeLinkOptionsQueryOptions = <TData = Awaited<ReturnType<typeof getEmployeeLinkOptions>>, TError = ErrorType<unknown>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEmployeeLinkOptions>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetEmployeeLinkOptionsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getEmployeeLinkOptions>>> = ({ signal }) => getEmployeeLinkOptions({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getEmployeeLinkOptions>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetEmployeeLinkOptionsQueryResult = NonNullable<Awaited<ReturnType<typeof getEmployeeLinkOptions>>>
+export type GetEmployeeLinkOptionsQueryError = ErrorType<unknown>
+
+
+export function useGetEmployeeLinkOptions<TData = Awaited<ReturnType<typeof getEmployeeLinkOptions>>, TError = ErrorType<unknown>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEmployeeLinkOptions>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getEmployeeLinkOptions>>,
+          TError,
+          Awaited<ReturnType<typeof getEmployeeLinkOptions>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetEmployeeLinkOptions<TData = Awaited<ReturnType<typeof getEmployeeLinkOptions>>, TError = ErrorType<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEmployeeLinkOptions>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getEmployeeLinkOptions>>,
+          TError,
+          Awaited<ReturnType<typeof getEmployeeLinkOptions>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetEmployeeLinkOptions<TData = Awaited<ReturnType<typeof getEmployeeLinkOptions>>, TError = ErrorType<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEmployeeLinkOptions>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List employees available for account linking
+ */
+
+export function useGetEmployeeLinkOptions<TData = Awaited<ReturnType<typeof getEmployeeLinkOptions>>, TError = ErrorType<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEmployeeLinkOptions>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetEmployeeLinkOptionsQueryOptions(options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
 
@@ -2370,6 +2561,81 @@ export const usePublishRosterVersion = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getPublishRosterVersionMutationOptions(options), queryClient);
+    }
+
+export const getDeleteRosterVersionUrl = (versionId: string,) => {
+
+
+
+
+  return `/api/roster-versions/${versionId}`
+}
+
+/**
+ * Deletes a draft or archived version and its assignments. The active published version cannot be deleted.
+ * @summary Delete an inactive roster version
+ */
+export const deleteRosterVersion = async (versionId: string, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getDeleteRosterVersionUrl(versionId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteRosterVersionMutationKey = () => ['deleteRosterVersion'] as const;
+
+export const getDeleteRosterVersionMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteRosterVersion>>, TError,DeleteRosterVersionMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteRosterVersion>>, TError,DeleteRosterVersionMutationVariables, TContext> => {
+
+const mutationKey = getDeleteRosterVersionMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteRosterVersion>>, DeleteRosterVersionMutationVariables> = (props) => {
+          const {versionId} = props ?? {};
+
+          return  deleteRosterVersion(versionId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteRosterVersionMutationResult = NonNullable<Awaited<ReturnType<typeof deleteRosterVersion>>>
+
+    export type DeleteRosterVersionMutationError = ErrorType<ApiError>
+    export type DeleteRosterVersionMutationVariables = {versionId: string}
+
+    /**
+ * @summary Delete an inactive roster version
+ */
+export const useDeleteRosterVersion = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteRosterVersion>>, TError,DeleteRosterVersionMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteRosterVersion>>,
+        TError,
+        DeleteRosterVersionMutationVariables,
+        TContext
+      > => {
+      return useMutation(getDeleteRosterVersionMutationOptions(options), queryClient);
     }
 
 export const getRollbackRosterVersionUrl = (versionId: string,) => {

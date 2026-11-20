@@ -434,12 +434,23 @@ function matchDepartment(
   );
 }
 
+function isHealthcareAssistantRole(value: string): boolean {
+  const key = normalize(value);
+  return (
+    key === "hca" ||
+    key === "healthcareassistant"
+  );
+}
+
 function matchDepartmentFromRole(
   role: string,
   departments: DepartmentReference[],
 ): DepartmentReference | undefined {
   const key = normalize(role);
   if (!key) return undefined;
+  if (isHealthcareAssistantRole(role)) {
+    return departments.find((department) => normalize(department.code) === "ed");
+  }
   return departments.find((department) => {
     const code = normalize(department.code);
     const name = normalize(department.name);
@@ -890,6 +901,7 @@ export async function parseRosterWorkbook(
   };
   let currentDepartmentId: string | null = null;
   let currentDepartmentSource = "";
+  let currentSectionRole = "";
   for (
     let rowNumber = selectedCandidate.headerRow + 1;
     rowNumber <= worksheet.rowCount;
@@ -941,6 +953,16 @@ export async function parseRosterWorkbook(
     const shiftCellValues = selectedCandidate.dateColumns.map(({ column }) =>
       rawCellText(row.getCell(column).value).trim(),
     );
+    if (
+      !sourceEmployeeId.trim() &&
+      !sourceEmployeeName.trim() &&
+      !roleValue.trim() &&
+      !departmentValue.trim() &&
+      shiftCellValues.every((value) => !value)
+    ) {
+      currentSectionRole = "";
+      continue;
+    }
     const recognizedRosterValues = shiftCellValues.filter((value) => {
       if (!value) return false;
       return shiftByCode.has(normalize(normalizeShiftValue(value)));
@@ -967,26 +989,47 @@ export async function parseRosterWorkbook(
         (shiftCellValues.every((value) => !value) || repeatedSectionLabel),
     );
     if (isUnconfiguredSectionLabel) {
-      currentDepartmentId = isDepartmentLabel?.id ?? null;
-      currentDepartmentSource = sourceEmployeeName.trim();
+      if (isHealthcareAssistantRole(sectionToken)) {
+        currentDepartmentId =
+          departments.find((department) => normalize(department.code) === "ed")
+            ?.id ?? null;
+        currentDepartmentSource = "ED";
+        currentSectionRole = "HCA";
+      } else {
+        currentDepartmentId = isDepartmentLabel?.id ?? null;
+        currentDepartmentSource = sourceEmployeeName.trim();
+        currentSectionRole = "";
+      }
       continue;
     }
+    const effectiveRole = roleValue.trim() || currentSectionRole;
     const isEmployeeRow = Boolean(
       (hasSourceEmployeeId || sourceEmployeeName.trim()) &&
         !isDepartmentLabel &&
-        (hasSourceEmployeeId || roleValue || employeeByNameMatch || hasRosterValues),
+        (hasSourceEmployeeId || effectiveRole || employeeByNameMatch || hasRosterValues),
     );
     if (!isEmployeeRow) continue;
 
     const name = sourceEmployeeName.trim();
     const employee = employeeByNameMatch;
-    const roleDepartment = matchDepartmentFromRole(roleValue, departments);
-    const sourceDepartment =
+    const roleDepartment = matchDepartmentFromRole(effectiveRole, departments);
+    const rawSourceDepartment =
       (departmentValue.trim() ? departmentValue : "") ||
       currentDepartmentSource ||
       roleDepartment?.code ||
       "";
+    const sourceDepartment =
+      isHealthcareAssistantRole(effectiveRole) &&
+      isHealthcareAssistantRole(rawSourceDepartment)
+        ? "ED"
+        : rawSourceDepartment;
+    const sourceDepartmentMatch =
+      matchDepartment(sourceDepartment, departments) ??
+      (isHealthcareAssistantRole(effectiveRole)
+        ? departments.find((department) => normalize(department.code) === "ed")
+        : undefined);
     const departmentId =
+      (isHealthcareAssistantRole(effectiveRole) ? sourceDepartmentMatch?.id : undefined) ??
       employee?.departmentId ??
       currentDepartmentId ??
       roleDepartment?.id ??
@@ -1002,7 +1045,7 @@ export async function parseRosterWorkbook(
         ),
       );
     }
-    if (sourceDepartment && !matchDepartment(sourceDepartment, departments)) {
+    if (sourceDepartment && !sourceDepartmentMatch) {
       addIssue(
         makeIssue(
           "unknown_department",
@@ -1022,10 +1065,18 @@ export async function parseRosterWorkbook(
         ),
       );
     }
+    const employeeDepartment = employee
+      ? departments.find((department) => department.id === employee.departmentId)
+      : undefined;
+    const knownHcaDepartmentAlias =
+      isHealthcareAssistantRole(effectiveRole) &&
+      employeeDepartment?.code === "HCA" &&
+      sourceDepartmentMatch?.code === "ED";
     if (
       employee &&
       currentDepartmentId &&
-      employee.departmentId !== currentDepartmentId
+      employee.departmentId !== currentDepartmentId &&
+      !knownHcaDepartmentAlias
     ) {
       addIssue(
         makeIssue(
@@ -1093,7 +1144,7 @@ export async function parseRosterWorkbook(
         sourceEmployeeId: hasSourceEmployeeId ? sourceEmployeeId : null,
         sourceEmployeeName: sourceEmployeeName,
         sourceDepartment,
-        sourceRole: roleValue,
+        sourceRole: effectiveRole,
         employeeId: employee?.id ?? null,
         employeeCode: employee?.employeeCode ?? (sourceEmployeeId.trim() || null),
         employeeName: employee?.fullName ?? (name || "Unmatched employee"),

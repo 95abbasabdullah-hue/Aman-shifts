@@ -25,7 +25,25 @@ export interface CurrentUser {
   role: CurrentUserRole;
   /** @nullable */
   departmentId: string | null;
+  /** @nullable */
+  employeeId: string | null;
+  /** @nullable */
+  employeeName: string | null;
 }
+
+export interface LinkEmployeeInput {
+  employeeId: string;
+}
+
+export interface EmployeeLinkOption {
+  id: string;
+  employeeCode: string;
+  fullName: string;
+  jobTitle: string;
+  departmentName: string;
+}
+
+export type EmployeeLinkOptionsResponse = EmployeeLinkOption[];
 
 export interface DashboardSummary {
   month: string;

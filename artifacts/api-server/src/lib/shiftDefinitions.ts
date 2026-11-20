@@ -29,7 +29,7 @@ export const DEFAULT_SHIFT_DEFINITIONS: DefaultShiftDefinition[] = [
     category: "working",
     name: "Night Shift",
     meaning: "19:00–07:00 next day",
-    color: "#7555C7",
+    color: "#FBC02D",
     displayCode: "N",
     displayInCalendar: true,
     startsAt: "19:00",
@@ -60,33 +60,48 @@ export const DEFAULT_SHIFT_DEFINITIONS: DefaultShiftDefinition[] = [
   ...["AL", "CL", "EL", "R", "OFF", "/"].map((code) => ({
     code,
     category: "attendance" as const,
-    name: code,
-    meaning: null,
-    color: "#78909C",
+    name:
+      code === "EL"
+        ? "Educational Leave"
+        : code === "AL"
+          ? "Annual Leave"
+          : code === "CL"
+            ? "Casual Leave"
+            : code === "R"
+              ? "Requested Off"
+              : code === "OFF"
+                ? "Off Day"
+                : "Off Day",
+    meaning:
+      code === "/"
+        ? "Legacy '/' source value; treated as off duty."
+        : null,
+    color:
+      code === "EL"
+        ? "#D1C4E9"
+        : code === "AL"
+          ? "#C5E1A5"
+          : code === "CL"
+            ? "#FFF59D"
+            : code === "R"
+              ? "#616161"
+              : code === "OFF"
+                ? "#E0E0E0"
+                : "#E0E0E0",
     displayCode: code,
     displayInCalendar: true,
     startsAt: null,
     endsAt: null,
   })),
-  {
-    code: "BLANK",
-    category: "attendance",
-    name: "Blank cell",
-    meaning: null,
-    color: "#78909C",
-    displayCode: "",
-    displayInCalendar: false,
-    startsAt: null,
-    endsAt: null,
-  },
 ];
 
 const KNOWN_CODES = new Set(DEFAULT_SHIFT_DEFINITIONS.map((definition) => definition.code));
 
 export function normalizeShiftValue(rawValue: string): string {
   const trimmed = rawValue.trim();
-  if (!trimmed) return "BLANK";
+  if (!trimmed) return "OFF";
   const upper = trimmed.toUpperCase();
+  if (upper === "/" || upper === "BLANK") return "OFF";
   if (upper === "D" || upper === "D*") return "D";
   if (upper === "N" || upper === "N*") return "N";
   if (KNOWN_CODES.has(upper)) return upper;

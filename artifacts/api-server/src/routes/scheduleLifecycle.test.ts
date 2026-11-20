@@ -21,6 +21,8 @@ import {
 import type { ScheduleResponse, RosterVersion } from "@workspace/api-zod";
 import { type AmanRequest } from "../lib/amanAuth";
 import { normalizeShiftValue } from "../lib/shiftDefinitions";
+import accountRouter from "./account";
+import catalogRouter from "./catalog";
 import { scheduleReadFailure, withScheduleReadErrors } from "./schedule";
 import importsRouter from "./imports";
 import scheduleRouter from "./schedule";
@@ -86,6 +88,12 @@ async function assignmentFingerprint(versionId: string): Promise<string> {
 }
 
 async function seedSyntheticRoster(suffix: string): Promise<TestSeed> {
+  const [department] = await db
+    .select()
+    .from(departmentsTable)
+    .where(eq(departmentsTable.code, "ED"))
+    .limit(1);
+  assert.ok(department, "The Emergency department must be configured for tests");
   const references = await db
     .select({
       id: shiftTypesTable.id,
@@ -107,15 +115,6 @@ async function seedSyntheticRoster(suffix: string): Promise<TestSeed> {
   assert.ok(shiftCodes.every((code) => shiftByCode.has(code)), "required demo shift types must be configured");
 
   return db.transaction(async (tx) => {
-    const [department] = await tx
-      .insert(departmentsTable)
-      .values({
-        code: `TEST-${suffix}`,
-        name: `Synthetic test team ${suffix}`,
-        timezone: "Asia/Qatar",
-        active: true,
-      })
-      .returning();
     const employees = await tx
       .insert(employeesTable)
       .values([
@@ -285,9 +284,6 @@ async function cleanupSyntheticRoster(seed: TestSeed): Promise<void> {
         .delete(shiftTypesTable)
         .where(inArray(shiftTypesTable.id, seed.importedShiftTypeIds));
     }
-    await tx
-      .delete(departmentsTable)
-      .where(eq(departmentsTable.id, seed.department.id));
   });
 }
 
@@ -298,7 +294,7 @@ function makeTestServer(seed: TestSeed) {
   ]);
   const app = express();
   app.use(express.json());
-  const testAuthentication: RequestHandler = (req, res, next) => {
+  const testAuthentication: RequestHandler = async (req, res, next) => {
     Object.assign(req, { log: { warn() {}, error() {} } });
     const userId = req.header("x-synthetic-user");
     const user = userId ? users.get(userId) : undefined;
@@ -306,11 +302,18 @@ function makeTestServer(seed: TestSeed) {
       res.status(401).json({ error: "Sign in required" });
       return;
     }
-    (req as AmanRequest).amanUser = user;
+    const [currentUser] = await db
+      .select()
+      .from(appUsersTable)
+      .where(eq(appUsersTable.id, user.id))
+      .limit(1);
+    (req as AmanRequest).amanUser = currentUser ?? user;
     next();
   };
   app.use(testAuthentication);
+  app.use("/api", accountRouter);
   app.use("/api", importsRouter);
+  app.use("/api", catalogRouter);
   app.use("/api", scheduleRouter);
   app.get(
     "/api/test/database-unavailable",
@@ -392,6 +395,96 @@ test("schedule reads and publication lifecycle preserve cross-month history", as
     assert.ok(address && typeof address !== "string");
     const baseUrl = `http://127.0.0.1:${address.port}/api`;
 
+    await t.test("links a signed-in account to one available employee", async () => {
+      const options = await sendJson(
+        baseUrl,
+        "/employee-link-options",
+        seed!.admin.id,
+      );
+      assert.equal(options.status, 200);
+      const employees = options.data as Array<{
+        id: string;
+        fullName: string;
+        departmentName: string;
+      }>;
+      assert.ok(employees.some((employee) => employee.id === seed!.employees[1]!.id));
+      assert.ok(!employees.some((employee) => employee.id === seed!.employees[0]!.id));
+
+      const alreadyClaimed = await sendJson(
+        baseUrl,
+        "/me/employee",
+        seed!.admin.id,
+        "PUT",
+        { employeeId: seed!.employees[0]!.id },
+      );
+      assert.equal(alreadyClaimed.status, 409);
+
+      const linked = await sendJson(
+        baseUrl,
+        "/me/employee",
+        seed!.admin.id,
+        "PUT",
+        { employeeId: seed!.employees[1]!.id },
+      );
+      assert.equal(linked.status, 200);
+      assert.equal(
+        (linked.data as { employeeId: string }).employeeId,
+        seed!.employees[1]!.id,
+      );
+      assert.equal(
+        (linked.data as { employeeName: string }).employeeName,
+        seed!.employees[1]!.fullName,
+      );
+      const linkedOptions = await sendJson(
+        baseUrl,
+        "/employee-link-options",
+        seed!.admin.id,
+      );
+      assert.deepEqual(
+        (linkedOptions.data as Array<{ id: string }>).map((option) => option.id),
+        [seed!.employees[1]!.id],
+      );
+      const repeatedLink = await sendJson(
+        baseUrl,
+        "/me/employee",
+        seed!.admin.id,
+        "PUT",
+        { employeeId: seed!.employees[1]!.id },
+      );
+      assert.equal(repeatedLink.status, 200);
+      const differentLink = await sendJson(
+        baseUrl,
+        "/me/employee",
+        seed!.admin.id,
+        "PUT",
+        { employeeId: seed!.employees[0]!.id },
+      );
+      assert.equal(differentLink.status, 409);
+
+      const myNovemberShifts = await sendJson(
+        baseUrl,
+        "/schedule/mine?month=2027-11",
+        seed!.admin.id,
+      );
+      assert.equal(myNovemberShifts.status, 200);
+      const personalAssignments = (myNovemberShifts.data as ScheduleResponse).assignments;
+      assert.equal(personalAssignments.length, 11);
+      assert.ok(personalAssignments.every(
+        (assignment) => assignment.employeeId === seed!.employees[1]!.id,
+      ));
+
+      const linkAudit = await db
+        .select({ id: auditLogsTable.id })
+        .from(auditLogsTable)
+        .where(
+          and(
+            eq(auditLogsTable.actorUserId, seed!.admin.id),
+            eq(auditLogsTable.action, "account.employee_linked"),
+          ),
+        );
+      assert.ok(linkAudit.length > 0);
+    });
+
     await t.test("distinguishes auth, empty periods, invalid months, and service failures", async () => {
       const unauthenticated = await sendJson(
         baseUrl,
@@ -455,6 +548,31 @@ test("schedule reads and publication lifecycle preserve cross-month history", as
         (runtimeFailure.data as { code?: string }).code,
         "schedule_load_failed",
       );
+    });
+
+    await t.test("exposes only Emergency and Intensive Care departments", async () => {
+      const response = await sendJson(
+        baseUrl,
+        "/departments",
+        seed!.staff.id,
+      );
+      assert.equal(response.status, 200);
+      const rows = response.data as Array<{ code: string; name: string }>;
+      assert.deepEqual(
+        rows.map((department) => [department.code, department.name]),
+        [
+          ["ED", "Emergency"],
+          ["ICU", "Intensive Care"],
+        ],
+      );
+      const unsupported = await sendJson(
+        baseUrl,
+        "/departments",
+        seed!.admin.id,
+        "POST",
+        { code: "HCA", name: "HCA", timezone: "Asia/Qatar" },
+      );
+      assert.equal(unsupported.status, 400);
     });
 
     await t.test("keeps a reviewed import as a draft until Admin publishes it", async () => {
@@ -524,8 +642,33 @@ test("schedule reads and publication lifecycle preserve cross-month history", as
       assert.equal(new Set(draftSchedule.assignments.map((item) => item.date)).size, 30);
       assert.ok(
         draftSchedule.assignments.some(
-          (item) => item.shiftCode === "/" && item.category === "attendance" && !item.isWorking,
+          (item) =>
+            item.shiftCode === "OFF" &&
+            item.shiftName === "Off Day" &&
+            item.shiftColor === "#E0E0E0" &&
+            item.category === "attendance" &&
+            !item.isWorking,
         ),
+      );
+      const slashSource = await db
+        .select({ id: shiftAssignmentsTable.id })
+        .from(shiftAssignmentsTable)
+        .where(
+          and(
+            eq(shiftAssignmentsTable.versionId, draft.id),
+            eq(shiftAssignmentsTable.sourceRawShiftValue, "/"),
+          ),
+        )
+        .limit(1);
+      assert.ok(slashSource.length > 0, "the original slash remains stored for auditing");
+      assert.ok(
+        draftSchedule.assignments.some(
+          (item) =>
+            item.id === slashSource[0]!.id &&
+            item.shiftCode === "OFF" &&
+            item.shiftColor === "#E0E0E0",
+        ),
+        "slash attendance is presented as gray OFF",
       );
       assert.ok(
         draftSchedule.assignments.some(
@@ -692,6 +835,121 @@ test("schedule reads and publication lifecycle preserve cross-month history", as
       assert.equal((restoredDecember.data as ScheduleResponse).assignments.length, 38);
     });
 
+    await t.test("deletes drafts and archived versions but protects the active roster", async () => {
+      const [activeVersion] = await db
+        .select()
+        .from(rosterVersionsTable)
+        .where(
+          and(
+            eq(rosterVersionsTable.createdBy, seed!.admin.id),
+            eq(rosterVersionsTable.status, "published"),
+          ),
+        )
+        .orderBy(rosterVersionsTable.createdAt);
+      assert.ok(activeVersion);
+      const activeFingerprint = await assignmentFingerprint(activeVersion.id);
+
+      const staffAttempt = await sendJson(
+        baseUrl,
+        `/roster-versions/${activeVersion.id}`,
+        seed!.staff.id,
+        "DELETE",
+      );
+      assert.equal(staffAttempt.status, 403);
+      const activeAttempt = await sendJson(
+        baseUrl,
+        `/roster-versions/${activeVersion.id}`,
+        seed!.admin.id,
+        "DELETE",
+      );
+      assert.equal(activeAttempt.status, 409);
+      assert.equal(
+        await assignmentFingerprint(activeVersion.id),
+        activeFingerprint,
+      );
+
+      const archivedDelete = await sendJson(
+        baseUrl,
+        `/roster-versions/${seed!.sourceVersion.id}`,
+        seed!.admin.id,
+        "DELETE",
+      );
+      assert.equal(archivedDelete.status, 204);
+      assert.equal(
+        (await db
+          .select({ id: rosterVersionsTable.id })
+          .from(rosterVersionsTable)
+          .where(eq(rosterVersionsTable.id, seed!.sourceVersion.id))).length,
+        0,
+      );
+      assert.equal(
+        (await db
+          .select({ id: shiftAssignmentsTable.id })
+          .from(shiftAssignmentsTable)
+          .where(eq(shiftAssignmentsTable.versionId, seed!.sourceVersion.id))).length,
+        0,
+      );
+      const deletionAudit = await db
+        .select({ action: auditLogsTable.action, details: auditLogsTable.details })
+        .from(auditLogsTable)
+        .where(
+          and(
+            eq(auditLogsTable.actorUserId, seed!.admin.id),
+            eq(auditLogsTable.action, "roster.version_deleted"),
+          ),
+        );
+      assert.ok(
+        deletionAudit.some(
+          (entry) =>
+            (entry.details as { versionId?: string }).versionId ===
+            seed!.sourceVersion.id,
+        ),
+      );
+
+      const draft = await sendJson(
+        baseUrl,
+        "/roster-versions",
+        seed!.admin.id,
+        "POST",
+        { month: rosterPeriod.month, copyPublished: true },
+      );
+      assert.equal(draft.status, 201);
+      const draftVersion = draft.data as RosterVersion;
+      const draftAssignmentsBefore = await db
+        .select({ id: shiftAssignmentsTable.id })
+        .from(shiftAssignmentsTable)
+        .where(eq(shiftAssignmentsTable.versionId, draftVersion.id));
+      assert.equal(draftAssignmentsBefore.length, 60);
+      const draftDelete = await sendJson(
+        baseUrl,
+        `/roster-versions/${draftVersion.id}`,
+        seed!.admin.id,
+        "DELETE",
+      );
+      assert.equal(draftDelete.status, 204);
+      assert.equal(
+        (await db
+          .select({ id: shiftAssignmentsTable.id })
+          .from(shiftAssignmentsTable)
+          .where(eq(shiftAssignmentsTable.versionId, draftVersion.id))).length,
+        0,
+      );
+
+      const activeSchedule = await sendJson(
+        baseUrl,
+        "/schedule/month?month=2027-11",
+        seed!.staff.id,
+      );
+      assert.equal(
+        (activeSchedule.data as ScheduleResponse).versionId,
+        activeVersion.id,
+      );
+      assert.equal(
+        await assignmentFingerprint(activeVersion.id),
+        activeFingerprint,
+      );
+    });
+
     await t.test("automatically imports, publishes, deduplicates, and safely rejects bad uploads", async () => {
       const suffix = randomUUID().replaceAll("-", "").slice(0, 8);
       const mysteryCode = `MYSTERY-${suffix}`;
@@ -821,7 +1079,17 @@ test("schedule reads and publication lifecycle preserve cross-month history", as
           assignment.date === "2027-11-21",
       );
       assert.ok(blankAssignment);
-      assert.equal(blankAssignment.shiftCode, "");
+      assert.equal(blankAssignment.shiftCode, "OFF");
+      const slashAssignment = uploadedPeriodAssignments.find(
+        (assignment) =>
+          assignment.employeeCode === seed!.employees[1]!.employeeCode &&
+          assignment.date === "2027-11-21",
+      );
+      assert.ok(slashAssignment);
+      assert.equal(slashAssignment.shiftCode, "OFF");
+      assert.equal(slashAssignment.shiftName, "Off Day");
+      assert.equal(slashAssignment.shiftColor, "#E0E0E0");
+      assert.ok(savedRows.some((row) => row.raw === "/"));
       const unknownType = await db
         .select({ id: shiftTypesTable.id })
         .from(shiftTypesTable)
@@ -937,6 +1205,11 @@ test(
         dateCount: number;
         assignmentCount: number;
         alreadyImported: boolean;
+        departmentCounts: Array<{
+          departmentCode: string;
+          departmentName: string;
+          employeeCount: number;
+        }>;
       };
       assert.equal(imported.version.status, "published");
       assert.equal(imported.import.selectedWorksheet, "ED-ICU");
@@ -944,6 +1217,17 @@ test(
       assert.equal(imported.dateCount, 30);
       assert.equal(imported.assignmentCount, 600);
       assert.equal(imported.alreadyImported, uploaded.status === 200);
+      assert.deepEqual(
+        imported.departmentCounts.map((department) => [
+          department.departmentCode,
+          department.departmentName,
+          department.employeeCount,
+        ]),
+        [
+          ["ED", "Emergency", 14],
+          ["ICU", "Intensive Care", 6],
+        ],
+      );
 
       const targetRows = (await db
         .select({
@@ -1027,6 +1311,10 @@ test(
             assert.equal(assignment.normalizedCode, "N");
             assert.equal(assignment.displayCode, "N");
           }
+          if (!raw.trim()) {
+            assert.equal(assignment.normalizedCode, "OFF");
+            assert.equal(assignment.displayCode, "OFF");
+          }
         }
       }
       assert.equal(
@@ -1035,10 +1323,95 @@ test(
       );
       assert.equal(targetRows.filter((assignment) => !assignment.raw?.trim()).length, 104);
 
+      const completeVersion = await sendJson(
+        baseUrl,
+        `/roster-versions/${imported.version.id}/schedule`,
+        admin.id,
+      );
+      assert.equal(completeVersion.status, 200);
+      const importedAssignments = (completeVersion.data as ScheduleResponse).assignments
+        .filter(
+          (assignment) =>
+            assignment.date >= "2026-11-20" &&
+            assignment.date <= "2026-12-19",
+        );
+      assert.equal(importedAssignments.length, 600);
+      assert.equal(new Set(importedAssignments.map((item) => item.date)).size, 30);
+      for (const date of dates) {
+        const dailyAssignments = importedAssignments.filter(
+          (item) => item.date === date,
+        );
+        assert.equal(
+          dailyAssignments.length,
+          20,
+          `all 20 employees remain available on ${date}`,
+        );
+        assert.deepEqual(
+          Object.fromEntries(
+            Object.entries(
+              dailyAssignments.reduce<Record<string, number>>((counts, item) => {
+                counts[item.departmentName] =
+                  (counts[item.departmentName] ?? 0) + 1;
+                return counts;
+              }, {}),
+            ).sort(([left], [right]) => left.localeCompare(right)),
+          ),
+          { Emergency: 14, "Intensive Care": 6 },
+        );
+      }
+      assert.equal(
+        importedAssignments.filter((item) => item.shiftCode === "OFF").length,
+        (sourceRawCounts.get("") ?? 0) +
+          (sourceRawCounts.get("OFF") ?? 0) +
+          (sourceRawCounts.get("/") ?? 0),
+      );
+      assert.ok((sourceRawCounts.get("/") ?? 0) > 0);
+      assert.ok(
+        importedAssignments.every((item) => item.shiftCode !== "/"),
+        "slash values are shown as OFF in Team Shifts",
+      );
+      const attendanceDefinitions = new Map([
+        ["EL", ["Educational Leave", "#D1C4E9"]],
+        ["AL", ["Annual Leave", "#C5E1A5"]],
+        ["CL", ["Casual Leave", "#FFF59D"]],
+        ["R", ["Requested Off", "#616161"]],
+        ["OFF", ["Off Day", "#E0E0E0"]],
+      ]);
+      for (const [code, [description, color]] of attendanceDefinitions) {
+        const assignment = importedAssignments.find(
+          (item) => item.shiftCode === code,
+        );
+        assert.ok(assignment, `${code} is available in the imported schedule`);
+        assert.equal(assignment.shiftName, description);
+        assert.equal(assignment.shiftColor, color);
+        assert.equal(assignment.category, "attendance");
+        assert.equal(assignment.isWorking, false);
+      }
+      assert.ok(
+        importedAssignments
+          .filter((assignment) => assignment.category === "attendance")
+          .every((assignment) => !assignment.isWorking),
+        "leave, unresolved, and off-day codes do not count as on duty",
+      );
+      for (const [code, color] of [
+        ["D", "#1976D2"],
+        ["N", "#FBC02D"],
+        ["M", "#43A047"],
+      ]) {
+        const assignment = importedAssignments.find(
+          (item) => item.shiftCode === code,
+        );
+        assert.ok(assignment);
+        assert.equal(assignment.shiftColor, color);
+        assert.equal(assignment.isWorking, true);
+      }
+
       const departmentRows = await db
         .select({
           departmentCode: departmentsTable.code,
           employeeId: employeesTable.id,
+          jobTitle: employeesTable.jobTitle,
+          sourceRole: shiftAssignmentsTable.sourceRole,
           date: shiftAssignmentsTable.date,
         })
         .from(shiftAssignmentsTable)
@@ -1056,9 +1429,7 @@ test(
         if (
           row.date >= "2026-11-20" &&
           row.date <= "2026-12-19" &&
-          (row.departmentCode === "ED" ||
-            row.departmentCode === "ICU" ||
-            row.departmentCode === "HCA")
+          (row.departmentCode === "ED" || row.departmentCode === "ICU")
         ) {
           const employees = departmentStaff.get(row.departmentCode) ?? new Set<string>();
           employees.add(row.employeeId);
@@ -1069,8 +1440,21 @@ test(
         Object.fromEntries(
           [...departmentStaff.entries()].map(([code, employees]) => [code, employees.size]),
         ),
-        { ED: 13, HCA: 1, ICU: 6 },
+        { ED: 14, ICU: 6 },
       );
+      assert.equal(
+        [...departmentStaff.values()].reduce((total, employees) => total + employees.size, 0),
+        20,
+      );
+      const hcaEmployeeRows = departmentRows.filter(
+        (row) =>
+          row.date >= "2026-11-20" &&
+          row.date <= "2026-12-19" &&
+          row.sourceRole === "HCA",
+      );
+      assert.equal(new Set(hcaEmployeeRows.map((row) => row.employeeId)).size, 1);
+      assert.ok(hcaEmployeeRows.every((row) => row.departmentCode === "ED"));
+      assert.ok(hcaEmployeeRows.every((row) => row.jobTitle === "Healthcare Assistant"));
 
       const november = await sendJson(
         baseUrl,
@@ -1151,6 +1535,7 @@ test(
           ),
           dates: imported.dateCount,
           cells: targetRows.length,
+          all20StaffPerDate: true,
           nonempty: 496,
           blank: 104,
           rawCodes: Object.fromEntries(

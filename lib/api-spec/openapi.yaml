@@ -50,6 +50,54 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CurrentUser"
+  /me/employee:
+    put:
+      operationId: linkCurrentUserEmployee
+      tags: [account]
+      summary: Link the signed-in user to their employee record
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LinkEmployeeInput"
+      responses:
+        "200":
+          description: Current user linked to the selected employee
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUser"
+        "400":
+          description: Invalid employee link request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Employee not found or inactive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: User or employee is already linked to another record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /employee-link-options:
+    get:
+      operationId: getEmployeeLinkOptions
+      tags: [account]
+      summary: List employees available for account linking
+      responses:
+        "200":
+          description: Active employees not linked to another account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmployeeLinkOptionsResponse"
   /dashboard/summary:
     get:
       operationId: getDashboardSummary
@@ -585,6 +633,33 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RosterVersion"
+  /roster-versions/{versionId}:
+    delete:
+      operationId: deleteRosterVersion
+      tags: [versions]
+      summary: Delete an inactive roster version
+      description: Deletes a draft or archived version and its assignments. The active published version cannot be deleted.
+      parameters:
+        - name: versionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Version and its assignments deleted
+        "404":
+          description: Roster version not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: Active published version cannot be deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /roster-versions/{versionId}/rollback:
     post:
       operationId: rollbackRosterVersion
@@ -698,7 +773,27 @@ components:
         fullName: { type: string }
         role: { type: string, enum: [admin, staff] }
         departmentId: { type: ["string", "null"] }
-      required: [id, clerkUserId, email, fullName, role, departmentId]
+        employeeId: { type: ["string", "null"] }
+        employeeName: { type: ["string", "null"] }
+      required: [id, clerkUserId, email, fullName, role, departmentId, employeeId, employeeName]
+    LinkEmployeeInput:
+      type: object
+      properties:
+        employeeId: { type: string, format: uuid }
+      required: [employeeId]
+    EmployeeLinkOption:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        employeeCode: { type: string }
+        fullName: { type: string }
+        jobTitle: { type: string }
+        departmentName: { type: string }
+      required: [id, employeeCode, fullName, jobTitle, departmentName]
+    EmployeeLinkOptionsResponse:
+      type: array
+      items:
+        $ref: "#/components/schemas/EmployeeLinkOption"
     DashboardSummary:
       type: object
       properties:

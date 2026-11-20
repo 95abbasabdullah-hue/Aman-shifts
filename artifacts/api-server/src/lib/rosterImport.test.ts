@@ -21,9 +21,8 @@ import {
 } from "./automaticRosterImport";
 
 const departments: DepartmentReference[] = [
-  { id: "dept-ed", code: "ED", name: "Emergency Department" },
-  { id: "dept-icu", code: "ICU", name: "Intensive Care Unit" },
-  { id: "dept-hca", code: "HCA", name: "Health Care Assistant" },
+  { id: "dept-ed", code: "ED", name: "Emergency" },
+  { id: "dept-icu", code: "ICU", name: "Intensive Care" },
 ];
 
 const shiftTypes: ShiftReference[] = DEFAULT_SHIFT_DEFINITIONS.map((shift) => ({
@@ -92,7 +91,9 @@ async function buildFixture(options: { competing?: boolean; unknownCode?: boolea
     let staffIndex = 0;
     let cellIndex = 0;
     for (const { row, department } of employeeRows) {
-      if ([7, 24, 34].includes(row)) sheet.getCell(row - 1, 1).value = department;
+      if ([7, 24, 34].includes(row)) {
+        sheet.getCell(row - 1, 2).value = department;
+      }
       const name = `Nurse Employee ${String(staffIndex + 1).padStart(2, "0")}`;
       const employeeCode = staffIndex === 16 ? "" : `ID${String(staffIndex + 1).padStart(3, "0")}`;
       sheet.getCell(row, 2).value = name;
@@ -103,7 +104,7 @@ async function buildFixture(options: { competing?: boolean; unknownCode?: boolea
           id: `emp-${staffIndex + 1}`,
           employeeCode,
           fullName: name,
-          departmentId: department === "ED" ? "dept-ed" : department === "ICU" ? "dept-icu" : "dept-hca",
+          departmentId: department === "ICU" ? "dept-icu" : "dept-ed",
         });
       } else {
         employees.push({
@@ -182,8 +183,8 @@ test("official shift normalization trims aliases and keeps D1 separate", () => {
   assert.equal(normalizeShiftValue(" M "), "M");
   assert.equal(normalizeShiftValue(" D1 "), "D1");
   assert.notEqual(normalizeShiftValue("D1"), normalizeShiftValue("D"));
-  assert.equal(normalizeShiftValue(""), "BLANK");
-  assert.equal(normalizeShiftValue(" / "), "/");
+  assert.equal(normalizeShiftValue("  "), "OFF");
+  assert.equal(normalizeShiftValue(" / "), "OFF");
   assert.equal(normalizeShiftValue(" OFF "), "OFF");
   assert.deepEqual(
     DEFAULT_SHIFT_DEFINITIONS.filter((shift) => shift.category === "working").map(
@@ -197,10 +198,36 @@ test("official shift normalization trims aliases and keeps D1 separate", () => {
     ),
     [
       { code: "D", displayCode: "D", color: "#1976D2", startsAt: "07:00", endsAt: "19:00" },
-      { code: "N", displayCode: "N", color: "#7555C7", startsAt: "19:00", endsAt: "07:00" },
+      { code: "N", displayCode: "N", color: "#FBC02D", startsAt: "19:00", endsAt: "07:00" },
       { code: "M", displayCode: "M", color: "#43A047", startsAt: null, endsAt: null },
       { code: "D1", displayCode: "D1", color: "#EF8F25", startsAt: null, endsAt: null },
     ],
+  );
+  const attendance = new Map(
+    DEFAULT_SHIFT_DEFINITIONS
+      .filter((shift) => shift.category === "attendance")
+      .map((shift) => [shift.code, shift]),
+  );
+  assert.deepEqual(
+    ["EL", "AL", "CL", "R", "OFF"].map((code) => [
+      code,
+      attendance.get(code)?.name,
+      attendance.get(code)?.color,
+    ]),
+    [
+      ["EL", "Educational Leave", "#D1C4E9"],
+      ["AL", "Annual Leave", "#C5E1A5"],
+      ["CL", "Casual Leave", "#FFF59D"],
+      ["R", "Requested Off", "#616161"],
+      ["OFF", "Off Day", "#E0E0E0"],
+    ],
+  );
+  assert.equal(attendance.get("/")?.code, "/");
+  assert.equal(attendance.get("/")?.name, "Off Day");
+  assert.equal(attendance.get("/")?.color, "#E0E0E0");
+  assert.equal(
+    DEFAULT_SHIFT_DEFINITIONS.find((shift) => shift.code === "OFF")?.category,
+    "attendance",
   );
 });
 
@@ -363,9 +390,7 @@ test("latest date range wins and preserves a cross-month 20 by 30 grid", async (
     const normalized = normalizeShiftValue(sourceRaw ?? "");
     assert.equal(
       record.shiftCode,
-      normalized === "BLANK"
-        ? ""
-        : shiftTypes.find((shift) => shift.code === normalized)?.displayCode,
+      shiftTypes.find((shift) => shift.code === normalized)?.displayCode,
     );
     assert.equal(
       record.shiftTypeId,
@@ -429,16 +454,19 @@ test("unknown codes warn without aborting, and attendance remains non-working", 
   );
   assert.equal(parsed.records.length, 600);
   assert.ok(parsed.issues.some((issue) => issue.code === "unknown_shift" && issue.value === "UNMAPPED"));
-  for (const code of ["AL", "CL", "EL", "R", "OFF", "/", "BLANK"]) {
+  for (const code of ["AL", "CL", "EL", "R", "OFF", "/"]) {
     assert.equal(
       shiftTypes.find((shift) => shift.code === code)?.category,
       "attendance",
       `${code} remains a non-working attendance status`,
     );
   }
-  assert.equal(normalizeShiftValue("/"), "/");
-  assert.equal(normalizeShiftValue(""), "BLANK");
-  assert.notEqual(normalizeShiftValue("/"), normalizeShiftValue("OFF"));
+  assert.equal(normalizeShiftValue("/"), "OFF");
+  assert.equal(normalizeShiftValue(""), "OFF");
+  assert.equal(normalizeShiftValue("/"), normalizeShiftValue("OFF"));
+  const slashRecord = parsed.records.find((record) => record.rawShiftValue === "/");
+  assert.equal(slashRecord?.shiftCode, "OFF");
+  assert.equal(slashRecord?.rawShiftValue, "/", "preserve source value for auditing");
   assert.equal(
     shiftTypes.find((shift) => shift.code === "D1")?.category,
     "working",
@@ -499,12 +527,12 @@ test("long-format sheets also select the newest actual date period", async () =>
   assert.equal(parsed.selectedWorksheet, "Current roster");
   assert.equal(parsed.periodStart, "2026-11-20");
   assert.equal(parsed.periodEnd, "2026-12-02");
-  assert.deepEqual(parsed.records.map((record) => record.shiftCode), ["D", "AL", ""]);
+  assert.deepEqual(parsed.records.map((record) => record.shiftCode), ["D", "AL", "OFF"]);
   assert.deepEqual(parsed.records.map((record) => record.rawShiftValue), ["D*", "AL", ""]);
 });
 
 test(
-  "automatic roster planning keeps every cell, creates missing departments, and preserves unknown values",
+  "automatic roster planning keeps every cell under only ED and ICU",
   async () => {
     const fixture = await buildFixture({ unknownCode: true });
     const employeeReferences = fixture.employees
@@ -517,9 +545,7 @@ test(
       }));
     const references: AutoImportReferenceData = {
       employees: employeeReferences,
-      departments: departments
-        .filter((department) => department.code !== "HCA")
-        .map((department) => ({ ...department, active: true })),
+      departments: departments.map((department) => ({ ...department, active: true })),
       shiftTypes: DEFAULT_SHIFT_DEFINITIONS.map((shift) => ({
         ...shift,
         id: `shift-${shift.code}`,
@@ -534,26 +560,29 @@ test(
       references.shiftTypes,
       references.departments,
     );
-    const parsedWithUnconfiguredHca = {
-      ...parsed,
-      records: parsed.records.map((record) =>
-        record.rowNumber === 34
-          ? { ...record, sourceDepartment: "HCA" }
-          : record,
-      ),
-    };
-    const plan = prepareAutomaticRoster(parsedWithUnconfiguredHca, references);
+    const plan = prepareAutomaticRoster(parsed, references);
     assert.equal(plan.employees.length, 20);
     assert.equal(plan.dates.length, 30);
     assert.equal(plan.assignments.length, 600);
     assert.deepEqual(plan.assignments.find((item) => item.record.rawShiftValue === "D*")?.normalizedShiftCode, "D");
     assert.deepEqual(plan.assignments.find((item) => item.record.rawShiftValue === "N*")?.normalizedShiftCode, "N");
     assert.equal(plan.unknownShiftCounts.get("UNMAPPED"), 1);
-    assert.ok(
-      plan.departments.some(
-        (department) => department.code === "HCA" && !department.existingId,
-      ),
-      JSON.stringify(plan.departments),
+    assert.deepEqual(
+      [...new Set(plan.departments.map((department) => department.code))].sort(),
+      ["ED", "ICU"],
+    );
+    const hcaEmployee = plan.employees.find(
+      (employee) => employee.sourceEmployeeId === "ID020",
+    );
+    assert.equal(hcaEmployee?.departmentKey, "id:dept-ed");
+    assert.equal(hcaEmployee?.jobTitle, "Healthcare Assistant");
+    assert.equal(
+      plan.employees.filter((employee) => employee.departmentKey === "id:dept-ed").length,
+      14,
+    );
+    assert.equal(
+      plan.employees.filter((employee) => employee.departmentKey === "id:dept-icu").length,
+      6,
     );
     const noIdEmployee = plan.employees.find((employee) => !employee.sourceEmployeeId);
     assert.ok(noIdEmployee?.employeeCode.startsWith("AUTO-"));
@@ -586,7 +615,7 @@ test(
       34,
     ];
     const departmentForRow = (row: number) =>
-      row <= 19 ? "ED" : row <= 29 ? "ICU" : "HCA";
+      row <= 19 || row === 34 ? "ED" : "ICU";
     const sourceDates = Array.from({ length: 30 }, (_, index) => {
       const value = sourceSheet.getRow(5).getCell(5 + index).value;
       assert.ok(value instanceof Date, `date header ${index + 1} must be an Excel date`);
@@ -631,7 +660,7 @@ test(
     assert.ok(!parsed.records.some((record) => record.rowNumber === 20 || record.rowNumber === 30));
     assert.deepEqual(
       Object.fromEntries(
-        ["ED", "ICU", "HCA"].map((code) => [
+        ["ED", "ICU"].map((code) => [
           code,
           new Set(
             parsed.records
@@ -640,26 +669,14 @@ test(
           ).size,
         ]),
       ),
-      { ED: 13, ICU: 6, HCA: 1 },
+      { ED: 14, ICU: 6 },
     );
-    const parsedWithoutHcaConfigured = await parseRosterWorkbook(
-      sourceBuffer,
-      "2026-11",
-      emptyMapping,
-      sourceEmployees,
-      shiftTypes,
-      departments.filter((department) => department.code !== "HCA"),
-    );
-    assert.equal(parsedWithoutHcaConfigured.records.length, 600);
-    assert.equal(
-      new Set(
-        parsedWithoutHcaConfigured.records
-          .filter((record) => record.sourceDepartment === "HCA")
-          .map((record) => record.rowNumber),
-      ).size,
-      1,
-    );
-    assert.ok(!parsedWithoutHcaConfigured.records.some((record) => record.rowNumber === 33));
+    const hcaAssignments = parsed.records.filter((record) => record.rowNumber === 34);
+    assert.equal(new Set(hcaAssignments.map((record) => record.departmentId)).size, 1);
+    assert.equal(hcaAssignments[0]?.departmentId, "dept-ed");
+    assert.ok(hcaAssignments.every((record) => record.sourceDepartment === "ED"));
+    assert.ok(hcaAssignments.every((record) => record.sourceRole === "HCA"));
+    assert.ok(!parsed.records.some((record) => record.rowNumber === 33));
 
     const expectedRawCounts = new Map<string, number>();
     const normalizedCounts = new Map<string, number>();
@@ -688,7 +705,7 @@ test(
         assert.equal(record.shiftTypeId, expectedShift?.id);
         assert.equal(
           record.shiftCode,
-          normalized === "BLANK" ? "" : expectedShift?.displayCode ?? normalized,
+          expectedShift?.displayCode ?? normalized,
         );
         expectedRawCounts.set(rawShiftValue, (expectedRawCounts.get(rawShiftValue) ?? 0) + 1);
         normalizedCounts.set(normalized, (normalizedCounts.get(normalized) ?? 0) + 1);

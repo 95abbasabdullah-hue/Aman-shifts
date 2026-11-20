@@ -15,4 +15,8 @@ export interface CurrentUser {
   role: CurrentUserRole;
   /** @nullable */
   departmentId: string | null;
+  /** @nullable */
+  employeeId: string | null;
+  /** @nullable */
+  employeeName: string | null;
 }

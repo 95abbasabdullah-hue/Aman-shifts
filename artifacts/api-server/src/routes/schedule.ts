@@ -22,6 +22,7 @@ import {
   CreateRosterVersionBody,
   CreateRosterVersionResponse,
   DeleteRosterAssignmentParams,
+  DeleteRosterVersionParams,
   GetDashboardSummaryQueryParams,
   GetDashboardSummaryResponse,
   GetMonthlyScheduleQueryParams,
@@ -56,8 +57,34 @@ import {
 } from "@workspace/db";
 import { currentAppUser, requireAdmin } from "../lib/amanAuth";
 import { writeAuditLog } from "../lib/audit";
+import { DEFAULT_SHIFT_DEFINITIONS } from "../lib/shiftDefinitions";
 
 const router: IRouter = Router();
+const offDayColor =
+  DEFAULT_SHIFT_DEFINITIONS.find((definition) => definition.code === "OFF")?.color ??
+  "#E0E0E0";
+
+function scheduleAssignmentResponse<
+  T extends {
+    fallbackShiftCode: string;
+    shiftCode: string | null;
+    shiftName: string;
+    shiftColor: string;
+    category: string;
+  },
+>(row: T) {
+  const { fallbackShiftCode, ...assignment } = row;
+  const sourceCode = assignment.shiftCode ?? fallbackShiftCode;
+  const isOffDutyAlias =
+    !sourceCode.trim() || ["/", "BLANK"].includes(sourceCode.trim().toUpperCase());
+  return {
+    ...assignment,
+    shiftCode: isOffDutyAlias ? "OFF" : sourceCode,
+    shiftName: isOffDutyAlias ? "Off Day" : assignment.shiftName,
+    shiftColor: isOffDutyAlias ? offDayColor : assignment.shiftColor,
+    isWorking: !isOffDutyAlias && assignment.category === "working",
+  };
+}
 
 function periodForMonth(month: string): { start: string; end: string } {
   const [year, monthNumber] = month.split("-").map(Number);
@@ -161,7 +188,10 @@ async function scheduleAssignments(
   employeeId?: string,
   month?: string,
 ) {
-  const conditions = [eq(shiftAssignmentsTable.versionId, versionId)];
+  const conditions = [
+    eq(shiftAssignmentsTable.versionId, versionId),
+    inArray(departmentsTable.code, ["ED", "ICU"]),
+  ];
   if (month) {
     const period = periodForMonth(month);
     conditions.push(
@@ -209,13 +239,7 @@ async function scheduleAssignments(
     )
     .where(and(...conditions))
     .orderBy(asc(shiftAssignmentsTable.date), asc(employeesTable.fullName))
-    .then((rows) =>
-      rows.map(({ fallbackShiftCode, ...assignment }) => ({
-        ...assignment,
-        shiftCode: assignment.shiftCode ?? fallbackShiftCode,
-        isWorking: assignment.category === "working",
-      })),
-    );
+    .then((rows) => rows.map(scheduleAssignmentResponse));
 }
 
 function schedulePayload(
@@ -274,12 +298,7 @@ async function assignmentById(versionId: string, assignmentId: string) {
     )
     .limit(1);
   if (!assignment) return assignment;
-  const { fallbackShiftCode, ...result } = assignment;
-  return {
-    ...result,
-    shiftCode: result.shiftCode ?? fallbackShiftCode,
-    isWorking: result.category === "working",
-  };
+  return scheduleAssignmentResponse(assignment);
 }
 
 async function getVersion(versionId: string) {
@@ -289,6 +308,26 @@ async function getVersion(versionId: string) {
     .where(eq(rosterVersionsTable.id, versionId))
     .limit(1);
   return version;
+}
+
+async function employeeIsInSupportedDepartment(employeeId: string): Promise<boolean> {
+  const [employee] = await db
+    .select({ id: employeesTable.id })
+    .from(employeesTable)
+    .innerJoin(
+      departmentsTable,
+      eq(departmentsTable.id, employeesTable.departmentId),
+    )
+    .where(
+      and(
+        eq(employeesTable.id, employeeId),
+        eq(employeesTable.active, true),
+        eq(departmentsTable.active, true),
+        inArray(departmentsTable.code, ["ED", "ICU"]),
+      ),
+    )
+    .limit(1);
+  return Boolean(employee);
 }
 
 async function versionResponse(
@@ -624,6 +663,7 @@ router.post(
         .select()
         .from(rosterVersionsTable)
         .where(eq(rosterVersionsTable.id, params.data.versionId))
+        .for("update")
         .limit(1);
       if (!draft) return null;
       if (draft.status !== "draft") return "not-draft" as const;
@@ -669,6 +709,67 @@ router.post(
     res.json(
       PublishRosterVersionResponse.parse(await versionResponse(version)),
     );
+  },
+);
+
+router.delete(
+  "/roster-versions/:versionId",
+  requireAdmin,
+  async (req, res): Promise<void> => {
+    const params = DeleteRosterVersionParams.safeParse(req.params);
+    if (!params.success) {
+      res.status(400).json({ error: params.error.message });
+      return;
+    }
+    const user = currentAppUser(req);
+    const result = await db.transaction(async (tx) => {
+      const [version] = await tx
+        .select()
+        .from(rosterVersionsTable)
+        .where(eq(rosterVersionsTable.id, params.data.versionId))
+        .for("update")
+        .limit(1);
+      if (!version) return { kind: "missing" as const };
+      if (version.status === "published") {
+        return { kind: "active" as const };
+      }
+
+      const period = periodForVersion(version);
+      const assignments = await tx
+        .delete(shiftAssignmentsTable)
+        .where(eq(shiftAssignmentsTable.versionId, version.id))
+        .returning({ id: shiftAssignmentsTable.id });
+      await tx.insert(auditLogsTable).values({
+        actorUserId: user.id,
+        action: "roster.version_deleted",
+        subject: `Version ${version.versionNumber} · ${period.start}–${period.end}`,
+        details: {
+          versionId: version.id,
+          versionNumber: version.versionNumber,
+          periodStart: period.start,
+          periodEnd: period.end,
+          previousStatus: version.status,
+          deletedAssignmentCount: assignments.length,
+        },
+      });
+      await tx
+        .delete(rosterVersionsTable)
+        .where(eq(rosterVersionsTable.id, version.id));
+      return { kind: "deleted" as const };
+    });
+
+    if (result.kind === "missing") {
+      res.status(404).json({ error: "Roster version not found" });
+      return;
+    }
+    if (result.kind === "active") {
+      res.status(409).json({
+        error:
+          "The active published roster cannot be deleted. Publish a replacement version first.",
+      });
+      return;
+    }
+    res.sendStatus(204);
   },
 );
 
@@ -776,6 +877,12 @@ router.post(
       res.status(400).json({ error: "Shift date must be within the roster period" });
       return;
     }
+    if (!(await employeeIsInSupportedDepartment(body.data.employeeId))) {
+      res.status(400).json({
+        error: "Assignments must belong to an active ED or ICU employee.",
+      });
+      return;
+    }
     try {
       const [created] = await db
         .insert(shiftAssignmentsTable)
@@ -835,6 +942,15 @@ router.patch(
       (body.data.date < versionPeriod.start || body.data.date > versionPeriod.end)
     ) {
       res.status(400).json({ error: "Shift date must be within the roster period" });
+      return;
+    }
+    if (
+      body.data.employeeId &&
+      !(await employeeIsInSupportedDepartment(body.data.employeeId))
+    ) {
+      res.status(400).json({
+        error: "Assignments must belong to an active ED or ICU employee.",
+      });
       return;
     }
     try {

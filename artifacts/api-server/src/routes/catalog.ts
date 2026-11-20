@@ -5,11 +5,10 @@ import {
   count,
   eq,
   ilike,
+  inArray,
   or,
 } from "drizzle-orm";
 import {
-  CreateDepartmentBody,
-  CreateDepartmentResponse,
   CreateEmployeeBody,
   CreateEmployeeResponse,
   CreateShiftTypeBody,
@@ -40,6 +39,21 @@ import { DEFAULT_SHIFT_DEFINITIONS } from "../lib/shiftDefinitions";
 
 const router: IRouter = Router();
 
+async function isSupportedDepartment(departmentId: string): Promise<boolean> {
+  const [department] = await db
+    .select({ code: departmentsTable.code })
+    .from(departmentsTable)
+    .where(
+      and(
+        eq(departmentsTable.id, departmentId),
+        eq(departmentsTable.active, true),
+        inArray(departmentsTable.code, ["ED", "ICU"]),
+      ),
+    )
+    .limit(1);
+  return Boolean(department);
+}
+
 router.get("/departments", async (_req, res): Promise<void> => {
   const rows = await db
     .select({
@@ -57,7 +71,12 @@ router.get("/departments", async (_req, res): Promise<void> => {
         eq(employeesTable.active, true),
       ),
     )
-    .where(eq(departmentsTable.active, true))
+    .where(
+      and(
+        eq(departmentsTable.active, true),
+        inArray(departmentsTable.code, ["ED", "ICU"]),
+      ),
+    )
     .groupBy(
       departmentsTable.id,
       departmentsTable.code,
@@ -74,35 +93,10 @@ router.get("/departments", async (_req, res): Promise<void> => {
 });
 
 router.post("/departments", requireAdmin, async (req, res): Promise<void> => {
-  const parsed = CreateDepartmentBody.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.message });
-    return;
-  }
-
-  try {
-    const [department] = await db
-      .insert(departmentsTable)
-      .values(parsed.data)
-      .returning();
-    const [employeeCount] = await db
-      .select({ count: count(employeesTable.id) })
-      .from(employeesTable)
-      .where(eq(employeesTable.departmentId, department.id));
-    const result = CreateDepartmentResponse.parse({
-      ...department,
-      employeeCount: Number(employeeCount.count),
-    });
-    await writeAuditLog({
-      actorUserId: currentAppUser(req).id,
-      action: "department.created",
-      subject: department.name,
-    });
-    res.status(201).json(result);
-  } catch (error) {
-    req.log.warn({ err: error }, "Could not create department");
-    res.status(409).json({ error: "A department with this code already exists" });
-  }
+  res.status(400).json({
+    error:
+      "Only the configured Emergency (ED) and Intensive Care (ICU) departments are supported.",
+  });
 });
 
 router.patch(
@@ -116,6 +110,32 @@ router.patch(
         error: params.success
           ? body.error?.message ?? "Invalid request body"
           : params.error.message,
+      });
+      return;
+    }
+    const [existingDepartment] = await db
+      .select()
+      .from(departmentsTable)
+      .where(eq(departmentsTable.id, params.data.departmentId))
+      .limit(1);
+    if (!existingDepartment) {
+      res.status(404).json({ error: "Department not found" });
+      return;
+    }
+    const expectedName =
+      existingDepartment.code === "ED"
+        ? "Emergency"
+        : existingDepartment.code === "ICU"
+          ? "Intensive Care"
+          : null;
+    if (
+      !expectedName ||
+      (body.data.code !== undefined && body.data.code !== existingDepartment.code) ||
+      (body.data.name !== undefined && body.data.name !== expectedName)
+    ) {
+      res.status(400).json({
+        error:
+          "Department codes and names are fixed. Only Emergency (ED) and Intensive Care (ICU) are supported.",
       });
       return;
     }
@@ -164,6 +184,10 @@ router.get(
     if (parsed.data.activeOnly !== false) {
       conditions.push(eq(employeesTable.active, true));
     }
+    conditions.push(
+      eq(departmentsTable.active, true),
+      inArray(departmentsTable.code, ["ED", "ICU"]),
+    );
     if (parsed.data.search?.trim()) {
       const search = `%${parsed.data.search.trim()}%`;
       conditions.push(
@@ -227,6 +251,12 @@ router.post("/employees", requireAdmin, async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
+  if (!(await isSupportedDepartment(parsed.data.departmentId))) {
+    res.status(400).json({
+      error: "Employees must be assigned to Emergency (ED) or Intensive Care (ICU).",
+    });
+    return;
+  }
   try {
     const [created] = await db
       .insert(employeesTable)
@@ -258,6 +288,15 @@ router.patch(
         error: params.success
           ? body.error?.message ?? "Invalid request body"
           : params.error.message,
+      });
+      return;
+    }
+    if (
+      body.data.departmentId !== undefined &&
+      !(await isSupportedDepartment(body.data.departmentId))
+    ) {
+      res.status(400).json({
+        error: "Employees must be assigned to Emergency (ED) or Intensive Care (ICU).",
       });
       return;
     }
@@ -381,7 +420,28 @@ router.patch(
             body.data.startsAt !== officialDefinition.startsAt) ||
           (body.data.endsAt !== undefined &&
             body.data.endsAt !== officialDefinition.endsAt));
-      if (changingIdentity || changingOfficialWorkDefinition) {
+      const changingOfficialAttendanceDefinition =
+        officialDefinition.category === "attendance" &&
+        officialDefinition.code !== "/" &&
+        ((body.data.name !== undefined &&
+          body.data.name !== officialDefinition.name) ||
+          (body.data.meaning !== undefined &&
+            body.data.meaning !== officialDefinition.meaning) ||
+          (body.data.color !== undefined &&
+            body.data.color !== officialDefinition.color) ||
+          (body.data.displayCode !== undefined &&
+            body.data.displayCode !== officialDefinition.displayCode) ||
+          (body.data.displayInCalendar !== undefined &&
+            body.data.displayInCalendar !== officialDefinition.displayInCalendar) ||
+          (body.data.startsAt !== undefined &&
+            body.data.startsAt !== officialDefinition.startsAt) ||
+          (body.data.endsAt !== undefined &&
+            body.data.endsAt !== officialDefinition.endsAt));
+      if (
+        changingIdentity ||
+        changingOfficialWorkDefinition ||
+        changingOfficialAttendanceDefinition
+      ) {
         res.status(400).json({
           error:
             "Official shift codes and working definitions are fixed; attendance display settings can be configured.",

@@ -25,4 +25,9 @@ channel = "stable-25_05"
 [userenv]
 
 [userenv.shared]
+
+[userenv.development]
+AMAN_ADMIN_EMAILS = "a.abdallah@amanhospital.org"
+
+[userenv.production]
 AMAN_ADMIN_EMAILS = "a.abdallah@amanhospital.org"

@@ -735,14 +735,44 @@ test("schedule reads and publication lifecycle preserve cross-month history", as
       assert.equal(editableSchedule.status, 200);
       const editableAssignment = (editableSchedule.data as ScheduleResponse).assignments[0];
       assert.ok(editableAssignment);
+      const targetShiftCode = editableAssignment.shiftCode === "D" ? "N" : "D";
+      const [originalShiftType] = await db
+        .select({ id: shiftTypesTable.id })
+        .from(shiftTypesTable)
+        .where(eq(shiftTypesTable.code, editableAssignment.shiftCode))
+        .limit(1);
+      const [targetShiftType] = await db
+        .select({ id: shiftTypesTable.id })
+        .from(shiftTypesTable)
+        .where(eq(shiftTypesTable.code, targetShiftCode))
+        .limit(1);
+      assert.ok(originalShiftType);
+      assert.ok(targetShiftType);
+
+      const deniedStaffEdit = await sendJson(
+        baseUrl,
+        `/roster-versions/${published.id}/assignments/${editableAssignment.id}`,
+        seed!.staff.id,
+        "PATCH",
+        { shiftTypeId: targetShiftType.id },
+      );
+      assert.equal(deniedStaffEdit.status, 403);
+
       const manualEdit = await sendJson(
         baseUrl,
         `/roster-versions/${published.id}/assignments/${editableAssignment.id}`,
         seed!.admin.id,
         "PATCH",
-        { notes: "Synthetic manual edit audit test" },
+        {
+          shiftTypeId: targetShiftType.id,
+          notes: "Synthetic manual edit audit test",
+        },
       );
       assert.equal(manualEdit.status, 200);
+      assert.equal(
+        (manualEdit.data as { shiftCode: string }).shiftCode,
+        targetShiftCode,
+      );
       const manualEditAudit = await db
         .select({ id: auditLogsTable.id })
         .from(auditLogsTable)
@@ -768,6 +798,12 @@ test("schedule reads and publication lifecycle preserve cross-month history", as
       const december = decemberResult.data as ScheduleResponse;
       assert.equal(november.versionId, published.id);
       assert.equal(december.versionId, published.id);
+      assert.equal(
+        november.assignments.find((item) => item.id === editableAssignment.id)
+          ?.shiftCode,
+        targetShiftCode,
+        "Staff reads the Admin's saved shift change.",
+      );
       assert.equal(november.assignments.length, 22);
       assert.equal(december.assignments.length, 38);
       assert.ok(november.assignments.every((item) => item.date.startsWith("2027-11-")));
@@ -1181,6 +1217,7 @@ test(
       .where(eq(appUsersTable.role, "admin"))
       .limit(1);
     assert.ok(admin, "A development admin account is required to activate the reference roster.");
+    const syntheticIdentityIds = new Set([admin.id]);
     const priorPublished = (await db
       .select()
       .from(rosterVersionsTable)
@@ -1193,9 +1230,23 @@ test(
       );
     const app = express();
     app.use(express.json());
-    app.use((req, _res, next) => {
+    app.use(async (req, res, next) => {
       Object.assign(req, { log: { warn() {}, error() {} } });
-      (req as AmanRequest).amanUser = admin;
+      const syntheticUserId = req.header("x-synthetic-user");
+      if (!syntheticUserId || !syntheticIdentityIds.has(syntheticUserId)) {
+        res.status(401).json({ error: "Staging test identity required" });
+        return;
+      }
+      const [syntheticUser] = await db
+        .select()
+        .from(appUsersTable)
+        .where(eq(appUsersTable.id, syntheticUserId))
+        .limit(1);
+      if (!syntheticUser) {
+        res.status(401).json({ error: "Staging test identity not found" });
+        return;
+      }
+      (req as AmanRequest).amanUser = syntheticUser;
       next();
     });
     app.use("/api", importsRouter);
@@ -1252,6 +1303,7 @@ test(
       const targetRows = (await db
         .select({
           date: shiftAssignmentsTable.date,
+          employeeId: shiftAssignmentsTable.employeeId,
           sourceEmployeeId: shiftAssignmentsTable.sourceEmployeeId,
           sourceEmployeeName: shiftAssignmentsTable.sourceEmployeeName,
           raw: shiftAssignmentsTable.sourceRawShiftValue,
@@ -1305,6 +1357,30 @@ test(
         }
         return "";
       };
+      const staffEmployeeName = rawText(sourceSheet.getRow(7).getCell(2).value).trim();
+      const [staffEmployee] = await db
+        .select({
+          id: employeesTable.id,
+          departmentId: employeesTable.departmentId,
+        })
+        .from(employeesTable)
+        .where(eq(employeesTable.fullName, staffEmployeeName))
+        .limit(1);
+      assert.ok(staffEmployee, "An imported employee is available for the synthetic Staff identity.");
+      const staffSuffix = randomUUID().replaceAll("-", "").slice(0, 12);
+      const [staff] = await db
+        .insert(appUsersTable)
+        .values({
+          clerkUserId: `staging-reference-staff-${staffSuffix}`,
+          email: `staging-reference-staff-${staffSuffix}@example.invalid`,
+          fullName: "Staging Reference Staff",
+          role: "staff",
+          employeeId: staffEmployee.id,
+          departmentId: staffEmployee.departmentId,
+        })
+        .returning();
+      syntheticIdentityIds.add(staff!.id);
+
       for (const rowNumber of sourceRows) {
         const sourceId = rawText(sourceSheet.getRow(rowNumber).getCell(3).value).trim();
         const sourceName = rawText(sourceSheet.getRow(rowNumber).getCell(2).value);
@@ -1536,6 +1612,90 @@ test(
         (repeated.data as { version: RosterVersion }).version.id,
         imported.version.id,
       );
+      const versionsForImport = await db
+        .select({ id: rosterVersionsTable.id })
+        .from(rosterVersionsTable)
+        .where(eq(rosterVersionsTable.sourceImportId, imported.version.sourceImportId!));
+      assert.equal(versionsForImport.length, 1);
+      const employeeRows = await db
+        .select({
+          id: employeesTable.id,
+          employeeCode: employeesTable.employeeCode,
+        })
+        .from(employeesTable);
+      assert.equal(employeeRows.length, 20);
+      assert.equal(
+        new Set(employeeRows.map((employee) => employee.employeeCode)).size,
+        20,
+      );
+      const repeatedAssignments = await db
+        .select({ id: shiftAssignmentsTable.id })
+        .from(shiftAssignmentsTable)
+        .where(eq(shiftAssignmentsTable.versionId, imported.version.id));
+      assert.equal(repeatedAssignments.length, 600);
+      const noIdAssignments = targetRows.filter(
+        (assignment) => !assignment.sourceEmployeeId?.trim(),
+      );
+      assert.equal(noIdAssignments.length, 30);
+      assert.equal(
+        new Set(noIdAssignments.map((assignment) => assignment.employeeId)).size,
+        1,
+        "The employee without a source ID keeps one identity across all 30 dates.",
+      );
+
+      const staffScheduleBeforeEdit = await sendJson(
+        baseUrl,
+        "/schedule/month?month=2026-11",
+        staff!.id,
+      );
+      assert.equal(staffScheduleBeforeEdit.status, 200);
+      const staffNovember = staffScheduleBeforeEdit.data as ScheduleResponse;
+      assert.equal(staffNovember.versionId, imported.version.id);
+      assert.equal(staffNovember.assignments.length, 220);
+      const editableAssignment = staffNovember.assignments.find(
+        (assignment) => assignment.shiftCode === "D",
+      );
+      assert.ok(editableAssignment, "The published roster has a working shift to edit.");
+      const targetShiftCode = editableAssignment.shiftCode === "D" ? "N" : "D";
+      const [targetShiftType] = await db
+        .select({ id: shiftTypesTable.id })
+        .from(shiftTypesTable)
+        .where(eq(shiftTypesTable.code, targetShiftCode))
+        .limit(1);
+      assert.ok(targetShiftType);
+      const adminEdit = await sendJson(
+        baseUrl,
+        `/roster-versions/${imported.version.id}/assignments/${editableAssignment.id}`,
+        admin.id,
+        "PATCH",
+        { shiftTypeId: targetShiftType.id },
+      );
+      assert.equal(adminEdit.status, 200);
+      assert.equal(
+        (adminEdit.data as { shiftCode: string }).shiftCode,
+        targetShiftCode,
+      );
+      const staffEditAttempt = await sendJson(
+        baseUrl,
+        `/roster-versions/${imported.version.id}/assignments/${editableAssignment.id}`,
+        staff!.id,
+        "PATCH",
+        { shiftTypeId: editableAssignment.shiftTypeId },
+      );
+      assert.equal(staffEditAttempt.status, 403);
+      const staffScheduleAfterEdit = await sendJson(
+        baseUrl,
+        "/schedule/month?month=2026-11",
+        staff!.id,
+      );
+      assert.equal(staffScheduleAfterEdit.status, 200);
+      assert.equal(
+        (staffScheduleAfterEdit.data as ScheduleResponse).assignments.find(
+          (assignment) => assignment.id === editableAssignment.id,
+        )?.shiftCode,
+        targetShiftCode,
+        "Staff sees the Admin edit and cannot overwrite it.",
+      );
 
       const invalid = await sendWorkbook(
         baseUrl,
@@ -1552,6 +1712,19 @@ test(
       assert.equal(
         (stillPublished.data as ScheduleResponse).versionId,
         imported.version.id,
+      );
+      const afterFailedImport = await sendJson(
+        baseUrl,
+        "/schedule/month?month=2026-11",
+        staff!.id,
+      );
+      assert.equal(afterFailedImport.status, 200);
+      assert.equal(
+        (afterFailedImport.data as ScheduleResponse).assignments.find(
+          (assignment) => assignment.id === editableAssignment.id,
+        )?.shiftCode,
+        targetShiftCode,
+        "A failed upload preserves the published version and the saved Admin edit.",
       );
       console.log(
         "REFERENCE_AUTO_IMPORT_RESULT",

@@ -22,3 +22,9 @@ description: User-provided scheduling, language, and demo-data constraints for A
 **Why:** The latest roster verification requirements explicitly distinguish `/` from OFF while preserving the original workbook value.
 
 **How to apply:** Keep all attendance statuses visible, exclude them from working counts, retain raw workbook values, and do not convert `/` to OFF unless the user later changes this rule.
+
+- Synthetic identities are permitted only in isolated staging integration tests; keep application role checks enabled and never bypass Production authentication.
+
+**Why:** The user explicitly authorized synthetic test identities for staging only and required real Clerk sessions to remain clearly untested.
+
+**How to apply:** Route test writes exclusively through `STAGING_DATABASE_URL`, resolve synthetic roles server-side, and do not claim Clerk or physical-device tests passed unless actually performed.

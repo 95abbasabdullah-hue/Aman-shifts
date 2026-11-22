@@ -1,2 +1,3 @@
 - [Aman roster constraints](aman-roster-constraints.md) — Use Asia/Qatar time, Sunday-first weeks, English-first RTL-ready UI, and fictional demo roster data only.
 - [Workspace TypeScript rebuilds](typescript-build-refresh.md) — Force-refresh composite library declarations after shared dependency upgrades before changing app code.
+- [Clerk with separate frontend and API hosts](clerk-cross-domain-hosting.md) — Clerk's Frontend API proxy must share the app's public domain; forward it through Pages when the API lives on Render.

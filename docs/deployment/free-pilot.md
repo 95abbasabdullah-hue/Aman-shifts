@@ -6,6 +6,7 @@ This runbook prepares, but does not deploy, a limited pilot:
 - Render Free for the existing Node/Express API.
 - A new, separate Neon Free production database.
 - A dedicated Clerk Production instance.
+- Planned application origin: `https://shifts.amanclinicalguide.com`.
 
 Do not use employee roster data from the hospital in this pilot. Use synthetic
 staff records only. Render describes Free services as unsuitable for production
@@ -30,13 +31,19 @@ availability commitment.
    Replit's Development or Production databases to either host.
 2. Create a **new Neon project/database for the pilot**. Do not reuse the
    Development, Staging, or any existing Production database.
-3. Create a separate Clerk Production instance. Clerk's current production
-   setup requires a domain you own and DNS access. A `pages.dev` URL alone is
-   not a substitute for that prerequisite.
-4. Configure the owned application domain on Cloudflare Pages and follow
-   Clerk's domain/DNS instructions. Configure OAuth credentials in Clerk for
-   each sign-in provider the pilot will expose.
-5. Choose one pilot Admin and set that address only in the Render
+3. Create a separate Clerk Production instance. The selected application
+   hostname is `shifts.amanclinicalguide.com`, using the existing
+   `amanclinicalguide.com` domain. A `pages.dev` URL alone is not a substitute
+   for the owned-domain prerequisite.
+4. Add `shifts.amanclinicalguide.com` as a custom domain in the Cloudflare Pages
+   project. Cloudflare will show the required DNS target; create the record at
+   the domain's DNS provider only after the Pages project exists. Do not guess
+   the CNAME target. If the domain's DNS is not managed by Cloudflare, make the
+   record change with that DNS provider and complete any domain verification
+   Cloudflare requests.
+5. Configure the verified application domain in Clerk and set up OAuth
+   credentials for each sign-in provider the pilot will expose.
+6. Choose one pilot Admin and set that address only in the Render
    `AMAN_ADMIN_EMAILS` environment variable. Add a Staff test account
    separately in Clerk. Never copy the Development or Staging allowlist
    automatically.
@@ -109,7 +116,7 @@ Set these Render environment values:
 | `CLERK_PUBLISHABLE_KEY` | Clerk Production publishable key |
 | `CLERK_SECRET_KEY` | Clerk Production secret key; secret |
 | `AMAN_ADMIN_EMAILS` | Pilot Admin allowlist, entered separately from Development |
-| `AMAN_ALLOWED_ORIGINS` | Exact HTTPS Pages/custom application origin(s), comma-separated |
+| `AMAN_ALLOWED_ORIGINS` | `https://shifts.amanclinicalguide.com` |
 
 Render supplies `PORT`; do not hardcode it. Never add `STAGING_DATABASE_URL` or
 the Development database URL to this service.
@@ -124,7 +131,7 @@ Configure the Pages project with:
 - Production environment variables:
   - `VITE_API_ORIGIN`: HTTPS origin of the Render API, with no path.
   - `VITE_CLERK_PUBLISHABLE_KEY`: Clerk Production publishable key.
-  - `VITE_CLERK_PROXY_URL`: `https://<app-domain>/api/__clerk`
+  - `VITE_CLERK_PROXY_URL`: `https://shifts.amanclinicalguide.com/api/__clerk`
 
 The build script sets `BASE_PATH=/` and a build-time `PORT` fallback because
 the Vite config validates both values. The Cloudflare Pages Function also needs
@@ -137,8 +144,9 @@ frontend assets.
 
 ## 5. Clerk and cross-domain checks
 
-Clerk's production documentation requires an owned domain and DNS setup. The
-proxy endpoint must share the app's public domain; the Pages Function above
+Clerk's production documentation requires control of the domain and DNS setup.
+The planned origin is `https://shifts.amanclinicalguide.com`. The proxy endpoint
+must share the app's public domain; the Pages Function above
 forwards `/api/__clerk/*` to Render while preserving the public app host for
 Clerk's `Clerk-Proxy-Url`. Normal roster API calls still go directly to Render
 and are protected by the existing HTTPS CORS allowlist plus the Clerk bearer
@@ -175,9 +183,9 @@ After both services are deployed:
   offline.
 - Keep the pilot roster synthetic; do not upload the hospital workbook.
 
-Cloudflare Pages supplies HTTPS on its hosted domain, and Render supplies
-HTTPS on its service domain. Clerk production still needs the owned application
-domain and provider setup above.
+Cloudflare Pages supplies HTTPS on its hosted domain, and Render supplies HTTPS
+on its service domain. The selected custom hostname still needs DNS verification
+and Clerk/provider setup before production sign-in can be tested.
 
 ## 7. Backup and restore procedure
 
